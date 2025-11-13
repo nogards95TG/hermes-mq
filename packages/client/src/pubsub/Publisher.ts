@@ -106,11 +106,7 @@ export class Publisher {
   /**
    * Publish an event to an exchange
    */
-  async publish<T = any>(
-    eventName: string,
-    data: T,
-    options: PublishOptions = {},
-  ): Promise<void> {
+  async publish<T = any>(eventName: string, data: T, options: PublishOptions = {}): Promise<void> {
     if (!eventName || typeof eventName !== 'string') {
       throw new ValidationError('Event name must be a non-empty string', {});
     }
@@ -161,16 +157,14 @@ export class Publisher {
     exchanges: string[],
     eventName: string,
     data: T,
-    options: Omit<PublishOptions, 'exchange'> = {},
+    options: Omit<PublishOptions, 'exchange'> = {}
   ): Promise<void> {
     if (!Array.isArray(exchanges) || exchanges.length === 0) {
       throw new ValidationError('Exchanges must be a non-empty array', {});
     }
 
     await Promise.all(
-      exchanges.map((exchange) =>
-        this.publish(eventName, data, { ...options, exchange }),
-      ),
+      exchanges.map((exchange) => this.publish(eventName, data, { ...options, exchange }))
     );
   }
 
@@ -231,7 +225,12 @@ export class Publisher {
     channel: Channel,
     exchange: string,
     type: 'topic' | 'fanout' | 'direct' = 'topic',
-    options: { durable?: boolean; autoDelete?: boolean; internal?: boolean; arguments?: Record<string, unknown> } = { durable: true },
+    options: {
+      durable?: boolean;
+      autoDelete?: boolean;
+      internal?: boolean;
+      arguments?: Record<string, unknown>;
+    } = { durable: true }
   ): Promise<void> {
     if (this.assertedExchanges.has(exchange)) {
       return;
@@ -243,7 +242,10 @@ export class Publisher {
       this.config.logger.debug(`Asserted exchange: ${exchange} (${type})`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new HermesError(`Failed to assert exchange "${exchange}": ${message}`, 'EXCHANGE_ERROR');
+      throw new HermesError(
+        `Failed to assert exchange "${exchange}": ${message}`,
+        'EXCHANGE_ERROR'
+      );
     }
   }
 }

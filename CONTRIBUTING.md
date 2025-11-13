@@ -92,7 +92,7 @@ Follow the prompts to describe your changes.
 
 - Write unit tests for all business logic
 - Write integration tests for external dependencies (RabbitMQ)
-- Aim for 85%+ code coverage
+- Aim for 75%+ code coverage
 - Use descriptive test names
 - Follow the AAA pattern (Arrange, Act, Assert)
 

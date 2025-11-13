@@ -187,7 +187,7 @@ export class RpcClient {
       try {
         // Send request
         const content = this.serializer.encode(request);
-        
+
         this.channel!.sendToQueue(this.config.queueName, content, {
           correlationId,
           replyTo: this.replyQueue!,
