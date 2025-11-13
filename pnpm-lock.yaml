@@ -112,6 +112,10 @@ importers:
 
   packages/hermes-mq:
     dependencies:
+      amqplib:
+        specifier: ^0.10.4
+        version: 0.10.9
+    devDependencies:
       '@hermes/client':
         specifier: workspace:*
         version: link:../client
@@ -121,10 +125,6 @@ importers:
       '@hermes/server':
         specifier: workspace:*
         version: link:../server
-      amqplib:
-        specifier: ^0.10.4
-        version: 0.10.9
-    devDependencies:
       '@types/amqplib':
         specifier: ^0.10.5
         version: 0.10.8
