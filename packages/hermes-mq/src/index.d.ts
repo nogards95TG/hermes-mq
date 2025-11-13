@@ -30,6 +30,13 @@ export type { RpcClientConfig, PublisherConfig } from '@hermes/client';
 export { RpcClient, Publisher } from '@hermes/client';
 
 // Server types
-export type { RpcServerConfig } from '@hermes/server';
+export type {
+  RpcServerConfig,
+  SubscriberConfig,
+  EventHandler,
+} from '@hermes/server';
 
-export { RpcServer } from '@hermes/server';
+export {
+  RpcServer,
+  Subscriber,
+} from '@hermes/server';
