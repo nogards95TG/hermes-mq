@@ -1,0 +1,50 @@
+{
+  "name": "@hermes/server",
+  "version": "1.0.0",
+  "description": "RPC server and publisher for Hermes MQ",
+  "keywords": [
+    "rabbitmq",
+    "rpc",
+    "server",
+    "pubsub"
+  ],
+  "author": "Hermes MQ Contributors",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hermes/core": "workspace:*",
+    "amqplib": "^0.10.4"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.5",
+    "@types/node": "^18.14.2",
+    "@vitest/coverage-v8": "^1.6.1",
+    "testcontainers": "^11.8.1",
+    "tsup": "^8.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
+  }
+}

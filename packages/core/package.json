@@ -1,0 +1,38 @@
+{
+  "name": "@hermes/core",
+  "version": "1.0.0",
+  "description": "Core connection management and utilities for Hermes RabbitMQ client",
+  "author": "nogards95TG",
+  "license": "MIT",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:unit": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage .turbo"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.5",
+    "tsup": "^8.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
