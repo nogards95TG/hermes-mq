@@ -1,0 +1,62 @@
+{
+  "name": "hermes-mq",
+  "version": "1.0.0",
+  "description": "Modern, type-safe RabbitMQ client library for Node.js with RPC and Pub/Sub support",
+  "author": "nogards95TG",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nogards95TG/hermes-mq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nogards95TG/hermes-mq/issues"
+  },
+  "homepage": "https://github.com/nogards95TG/hermes-mq#readme",
+  "keywords": [
+    "rabbitmq",
+    "amqp",
+    "message-queue",
+    "rpc",
+    "pubsub",
+    "publisher",
+    "subscriber",
+    "microservices",
+    "typescript"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup && cp src/index.d.ts dist/index.d.ts && cp src/index.d.ts dist/index.d.cts",
+    "test": "echo 'Tests run from workspace root'",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4"
+  },
+  "devDependencies": {
+    "@hermes/core": "workspace:*",
+    "@hermes/client": "workspace:*",
+    "@hermes/server": "workspace:*",
+    "@types/amqplib": "^0.10.5",
+    "tsup": "^8.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

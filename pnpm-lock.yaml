@@ -110,6 +110,28 @@ importers:
         specifier: ^8.0.1
         version: 8.5.0(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.1)
 
+  packages/hermes-mq:
+    dependencies:
+      '@hermes/client':
+        specifier: workspace:*
+        version: link:../client
+      '@hermes/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hermes/server':
+        specifier: workspace:*
+        version: link:../server
+      amqplib:
+        specifier: ^0.10.4
+        version: 0.10.9
+    devDependencies:
+      '@types/amqplib':
+        specifier: ^0.10.5
+        version: 0.10.8
+      tsup:
+        specifier: ^8.0.1
+        version: 8.5.0(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.1)
+
   packages/server:
     dependencies:
       '@hermes/core':
