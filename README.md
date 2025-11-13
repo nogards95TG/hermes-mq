@@ -178,7 +178,7 @@ hermes-mq/
 │   ├── core/          # Core connection and utilities
 │   ├── client/        # RPC client and Pub/Sub
 │   ├── server/        # RPC server
-│   └── testing/       # Test utilities
+│   └── hermes-mq/     # Single export package
 └── docker-compose.yml # RabbitMQ setup
 ```
 
