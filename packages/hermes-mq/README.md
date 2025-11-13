@@ -28,6 +28,7 @@ yarn add hermes-mq
 ### RPC (Request/Response)
 
 **Server:**
+
 ```typescript
 import { RpcServer } from 'hermes-mq';
 
@@ -39,12 +40,12 @@ const server = new RpcServer({
 
 // Register command handlers
 server
-  .command('GET_USER', async ({ id }: { id: string }) => {
+  .registerHandler('GET_USER', async ({ id }: { id: string }) => {
     const user = await db.users.findById(id);
     if (!user) throw new Error('User not found');
     return user;
   })
-  .command('CREATE_USER', async (data: CreateUserDto) => {
+  .registerHandler('CREATE_USER', async (data: CreateUserDto) => {
     return await db.users.create(data);
   });
 
@@ -59,6 +60,7 @@ process.on('SIGTERM', async () => {
 ```
 
 **Client:**
+
 ```typescript
 import { RpcClient } from 'hermes-mq';
 
@@ -69,10 +71,7 @@ const client = new RpcClient({
 });
 
 // Send command and wait for response
-const user = await client.send<{ id: string }, User>(
-  'GET_USER',
-  { id: '123' }
-);
+const user = await client.send<{ id: string }, User>('GET_USER', { id: '123' });
 
 console.log(user);
 await client.close();
@@ -81,6 +80,7 @@ await client.close();
 ### Pub/Sub (Event-Driven)
 
 **Publisher:**
+
 ```typescript
 import { Publisher } from 'hermes-mq';
 
@@ -96,16 +96,13 @@ await publisher.publish('user.created', {
 });
 
 // Publish to multiple exchanges
-await publisher.publishToMany(
-  ['app_events', 'audit_events'],
-  'user.deleted',
-  { userId: '123' }
-);
+await publisher.publishToMany(['app_events', 'audit_events'], 'user.deleted', { userId: '123' });
 
 await publisher.close();
 ```
 
 **Subscriber:**
+
 ```typescript
 import { Subscriber } from 'hermes-mq';
 
@@ -163,10 +160,12 @@ class WinstonAdapter implements Logger {
   }
 }
 
-const logger = new WinstonAdapter(winston.createLogger({
-  level: 'info',
-  format: winston.format.json(),
-}));
+const logger = new WinstonAdapter(
+  winston.createLogger({
+    level: 'info',
+    format: winston.format.json(),
+  })
+);
 
 const client = new RpcClient({
   connection: { url: 'amqp://localhost', logger },
@@ -247,13 +246,14 @@ const connection = await manager.getConnection();
 ### RPC
 
 #### `RpcClient`
+
 - `send<TRequest, TResponse>(command, data, options?)` - Send RPC request
 - `isReady()` - Check if client is ready
 - `close()` - Close client connection
 
 #### `RpcServer`
-- `command(commandName, handler)` - Register single command handler
-- `commands(handlers)` - Register multiple command handlers
+
+- `registerHandler(commandName, handler)` - Register single command handler
 - `start()` - Start server
 - `stop(options?)` - Stop server gracefully
 - `isRunning()` - Check if server is running
@@ -262,11 +262,13 @@ const connection = await manager.getConnection();
 ### Pub/Sub
 
 #### `Publisher`
+
 - `publish(eventName, data, options?)` - Publish event
 - `publishToMany(exchanges, eventName, data, options?)` - Publish to multiple exchanges
 - `close()` - Close publisher
 
 #### `Subscriber`
+
 - `on(eventPattern, handler)` - Register event handler
 - `start()` - Start consuming
 - `stop()` - Stop consuming
@@ -275,6 +277,7 @@ const connection = await manager.getConnection();
 ### Core
 
 #### `ConnectionManager`
+
 - `getInstance(config)` - Get singleton instance
 - `getConnection()` - Get connection
 - `isConnected()` - Check connection status
@@ -282,6 +285,7 @@ const connection = await manager.getConnection();
 - `on(event, handler)` - Listen to events
 
 #### `RetryPolicy`
+
 - `execute(fn, context?)` - Execute function with retry
 - `shouldRetry(error, attempt)` - Check if should retry
 - `getDelay(attempt)` - Get delay for attempt
@@ -329,14 +333,11 @@ interface GetUserRequest {
 }
 
 // Fully typed request/response
-const user = await client.send<GetUserRequest, User>(
-  'GET_USER',
-  { id: '123' }
-);
+const user = await client.send<GetUserRequest, User>('GET_USER', { id: '123' });
 // user is typed as User
 
 // Typed command handler
-server.command<GetUserRequest, User>('GET_USER', async (data) => {
+server.registerHandler<GetUserRequest, User>('GET_USER', async (data) => {
   // data is typed as GetUserRequest
   // return type must be User
   return await db.users.findById(data.id);

@@ -34,12 +34,12 @@ const server = new RpcServer({
 
 // Register command handlers
 server
-  .command('GET_USER', async ({ id }: { id: string }) => {
+  .registerHandler('GET_USER', async ({ id }: { id: string }) => {
     const user = await db.users.findById(id);
     if (!user) throw new Error('User not found');
     return user;
   })
-  .command('CREATE_USER', async (data: CreateUserDto) => {
+  .registerHandler('CREATE_USER', async (data: CreateUserDto) => {
     return await db.users.create(data);
   });
 
@@ -59,25 +59,8 @@ process.on('SIGTERM', async () => {
 ### Single Command
 
 ```typescript
-server.command('ECHO', async (data) => {
+server.registerHandler('ECHO', async (data) => {
   return { echo: data };
-});
-```
-
-### Multiple Commands
-
-```typescript
-server.commands({
-  GET_USER: async ({ id }) => {
-    return await db.users.findById(id);
-  },
-  CREATE_USER: async (data) => {
-    return await db.users.create(data);
-  },
-  DELETE_USER: async ({ id }) => {
-    await db.users.delete(id);
-    return { success: true };
-  },
 });
 ```
 
@@ -86,7 +69,7 @@ server.commands({
 Errors thrown in handlers are automatically caught and sent back to the client:
 
 ```typescript
-server.command('GET_USER', async ({ id }: { id: string }) => {
+server.registerHandler('GET_USER', async ({ id }: { id: string }) => {
   const user = await db.users.findById(id);
   if (!user) {
     // This error will be serialized and sent to the client
