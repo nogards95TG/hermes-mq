@@ -1,6 +1,6 @@
 # GitHub Actions Workflows
 
-This directory contains the CI/CD workflows for Hermes MQ.
+This document describes the CI/CD workflows for Hermes MQ.
 
 ## Workflows
 
