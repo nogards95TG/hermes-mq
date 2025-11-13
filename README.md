@@ -40,6 +40,7 @@ docker-compose up -d
 ```
 
 RabbitMQ will be available at:
+
 - AMQP: `amqp://localhost:5672`
 - Management UI: `http://localhost:15672` (admin/admin)
 
@@ -72,12 +73,12 @@ const server = new RpcServer({
 });
 
 server
-  .command('GET_USER', async ({ id }: { id: string }) => {
+  .registerHandler('GET_USER', async ({ id }: { id: string }) => {
     const user = await db.users.findById(id);
     if (!user) throw new Error('User not found');
     return user;
   })
-  .command('CREATE_USER', async (data: CreateUserDto) => {
+  .registerHandler('CREATE_USER', async (data: CreateUserDto) => {
     return await db.users.create(data);
   });
 
@@ -95,10 +96,7 @@ const client = new RpcClient({
   timeout: 5000,
 });
 
-const user = await client.send<{ id: string }, User>(
-  'GET_USER',
-  { id: '123' }
-);
+const user = await client.send<{ id: string }, User>('GET_USER', { id: '123' });
 
 console.log(user);
 ```
@@ -204,8 +202,6 @@ await mockPublisher.publish('user.created', { id: 123 });
 const events = mockPublisher.getPublishedEvents();
 ```
 
-📖 **[Complete Testing Guide](./docs/TESTING.md)** - Examples, best practices, and API reference
-
 ### Running Tests
 
 ```bash
@@ -230,6 +226,7 @@ pnpm test:coverage
 ## 🔄 Continuous Integration
 
 All pull requests and commits are automatically tested with:
+
 - ✅ Linting (ESLint)
 - ✅ Type checking (TypeScript)
 - ✅ Unit tests on Node.js 18, 20, and 22

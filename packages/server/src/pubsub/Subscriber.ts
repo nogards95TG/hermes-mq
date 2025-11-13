@@ -70,7 +70,9 @@ interface HandlerRegistration<T = any> {
 export class Subscriber {
   private connectionManager: ConnectionManager;
   private channel?: Channel;
-  private config: Required<Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions'>> & {
+  private config: Required<
+    Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions'>
+  > & {
     queueName?: string;
     queueOptions?: SubscriberConfig['queueOptions'];
     exchangeOptions?: SubscriberConfig['exchangeOptions'];
@@ -148,7 +150,10 @@ export class Subscriber {
     }
 
     if (this.handlers.length === 0) {
-      throw new ValidationError('No handlers registered. Use .on() to register at least one handler', {});
+      throw new ValidationError(
+        'No handlers registered. Use .on() to register at least one handler',
+        {}
+      );
     }
 
     const channel = await this.ensureChannel();
@@ -157,7 +162,7 @@ export class Subscriber {
     await channel.assertExchange(
       this.config.exchange,
       this.config.exchangeType,
-      this.config.exchangeOptions,
+      this.config.exchangeOptions
     );
 
     // Create queue (auto-generated name if not specified)
@@ -168,7 +173,9 @@ export class Subscriber {
     // Bind queue to all registered patterns
     for (const { pattern } of this.handlers) {
       await channel.bindQueue(this.generatedQueueName, this.config.exchange, pattern);
-      this.config.logger.debug(`Bound queue ${this.generatedQueueName} to ${this.config.exchange} with pattern: ${pattern}`);
+      this.config.logger.debug(
+        `Bound queue ${this.generatedQueueName} to ${this.config.exchange} with pattern: ${pattern}`
+      );
     }
 
     // Set prefetch
@@ -178,7 +185,7 @@ export class Subscriber {
     const consumeResult = await channel.consume(
       this.generatedQueueName,
       (msg) => this.handleMessage(msg),
-      { noAck: false },
+      { noAck: false }
     );
 
     this.consumerTag = consumeResult.consumerTag;
@@ -273,9 +280,7 @@ export class Subscriber {
       this.config.logger.debug(`Received event: ${eventName}`);
 
       // Find handlers that match the event pattern
-      const matchingHandlers = this.handlers.filter((h) =>
-        h.regex.test(eventName),
-      );
+      const matchingHandlers = this.handlers.filter((h) => h.regex.test(eventName));
 
       if (matchingHandlers.length === 0) {
         this.config.logger.warn(`No handlers matched for event: ${eventName}`);
@@ -291,8 +296,8 @@ export class Subscriber {
             timestamp,
             metadata,
             rawMessage: msg,
-          }),
-        ),
+          })
+        )
       );
 
       await channel.ack(msg);
@@ -310,10 +315,7 @@ export class Subscriber {
    * * = one word, # = zero or more words
    */
   private patternToRegex(pattern: string): RegExp {
-    const escaped = pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*/g, '[^.]+')
-      .replace(/#/g, '.*');
+    const escaped = pattern.replace(/\./g, '\\.').replace(/\*/g, '[^.]+').replace(/#/g, '.*');
 
     return new RegExp(`^${escaped}$`);
   }
