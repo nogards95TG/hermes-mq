@@ -6,10 +6,24 @@
     "rabbitmq",
     "rpc",
     "server",
-    "pubsub"
+    "pubsub",
+    "amqp",
+    "typescript"
   ],
-  "author": "Hermes MQ Contributors",
+  "author": "nogards95TG",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nogards95TG/hermes-mq.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/nogards95TG/hermes-mq/issues"
+  },
+  "homepage": "https://github.com/nogards95TG/hermes-mq#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

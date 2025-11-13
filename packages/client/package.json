@@ -4,6 +4,31 @@
   "description": "RPC client and Pub/Sub publisher/subscriber for Hermes RabbitMQ client",
   "author": "nogards95TG",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nogards95TG/hermes-mq.git",
+    "directory": "packages/client"
+  },
+  "bugs": {
+    "url": "https://github.com/nogards95TG/hermes-mq/issues"
+  },
+  "homepage": "https://github.com/nogards95TG/hermes-mq#readme",
+  "keywords": [
+    "rabbitmq",
+    "amqp",
+    "rpc",
+    "pubsub",
+    "publisher",
+    "subscriber",
+    "typescript"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
