@@ -1,6 +1,6 @@
 /**
  * Hermes MQ - Modern RabbitMQ Client for Node.js
- * 
+ *
  * A production-ready RabbitMQ client library with RPC and Pub/Sub patterns.
  * Features connection pooling, automatic reconnection, request timeouts, and TypeScript support.
  */

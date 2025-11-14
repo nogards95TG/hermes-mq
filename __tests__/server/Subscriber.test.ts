@@ -164,14 +164,10 @@ describe('Subscriber', () => {
       expect(mockChannel.assertExchange).toHaveBeenCalledWith(
         'events',
         'topic',
-        expect.any(Object),
+        expect.any(Object)
       );
       expect(mockChannel.assertQueue).toHaveBeenCalled();
-      expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'test-queue-123',
-        'events',
-        'user.*',
-      );
+      expect(mockChannel.bindQueue).toHaveBeenCalledWith('test-queue-123', 'events', 'user.*');
       expect(mockChannel.prefetch).toHaveBeenCalledWith(10);
       expect(mockChannel.consume).toHaveBeenCalled();
       expect(subscriber.isRunning()).toBe(true);
@@ -187,16 +183,8 @@ describe('Subscriber', () => {
 
       await subscriber.start();
 
-      expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'test-queue-123',
-        'events',
-        'user.*',
-      );
-      expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'test-queue-123',
-        'events',
-        'order.#',
-      );
+      expect(mockChannel.bindQueue).toHaveBeenCalledWith('test-queue-123', 'events', 'user.*');
+      expect(mockChannel.bindQueue).toHaveBeenCalledWith('test-queue-123', 'events', 'order.#');
     });
 
     it('should use custom prefetch', async () => {
@@ -234,10 +222,7 @@ describe('Subscriber', () => {
       subscriber.on('test', vi.fn());
       await subscriber.start();
 
-      expect(mockChannel.assertQueue).toHaveBeenCalledWith(
-        'my-queue',
-        expect.any(Object),
-      );
+      expect(mockChannel.assertQueue).toHaveBeenCalledWith('my-queue', expect.any(Object));
     });
   });
 
@@ -297,7 +282,7 @@ describe('Subscriber', () => {
             eventName: 'user.created',
             data: { id: 1 },
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'user.created' },
       };
@@ -308,7 +293,7 @@ describe('Subscriber', () => {
         { id: 1 },
         expect.objectContaining({
           eventName: 'user.created',
-        }),
+        })
       );
       expect(mockChannel.ack).toHaveBeenCalledWith(message);
     });
@@ -332,7 +317,7 @@ describe('Subscriber', () => {
             eventName: 'user.created',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'user.created' },
       };
@@ -345,7 +330,7 @@ describe('Subscriber', () => {
             eventName: 'user.updated',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'user.updated' },
       };
@@ -373,7 +358,7 @@ describe('Subscriber', () => {
             eventName: 'order.created',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'order.created' },
       };
@@ -386,7 +371,7 @@ describe('Subscriber', () => {
             eventName: 'order.shipped.express',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'order.shipped.express' },
       };
@@ -414,7 +399,7 @@ describe('Subscriber', () => {
             eventName: 'order.created',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'order.created' },
       };
@@ -444,7 +429,7 @@ describe('Subscriber', () => {
             eventName: 'user.created',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'user.created' },
       };
@@ -484,7 +469,7 @@ describe('Subscriber', () => {
             eventName: 'user.created',
             data: {},
             timestamp: Date.now(),
-          }),
+          })
         ),
         fields: { routingKey: 'user.created' },
       };

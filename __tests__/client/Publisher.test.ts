@@ -107,7 +107,7 @@ describe('Publisher', () => {
       expect(mockChannel.assertExchange).toHaveBeenCalledWith(
         'test-exchange',
         'topic',
-        expect.any(Object),
+        expect.any(Object)
       );
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'test-exchange',
@@ -116,7 +116,7 @@ describe('Publisher', () => {
         expect.objectContaining({
           persistent: true,
           contentType: 'application/json',
-        }),
+        })
       );
       expect(mockChannel.waitForConfirms).toHaveBeenCalled();
     });
@@ -128,23 +128,19 @@ describe('Publisher', () => {
         'test-exchange',
         'custom.route',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
     });
 
     it('should use custom exchange', async () => {
       await publisher.publish('log.info', { message: 'test' }, { exchange: 'logs' });
 
-      expect(mockChannel.assertExchange).toHaveBeenCalledWith(
-        'logs',
-        'topic',
-        expect.any(Object),
-      );
+      expect(mockChannel.assertExchange).toHaveBeenCalledWith('logs', 'topic', expect.any(Object));
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'logs',
         'log.info',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
     });
 
@@ -157,7 +153,7 @@ describe('Publisher', () => {
         expect.any(Buffer),
         expect.objectContaining({
           persistent: false,
-        }),
+        })
       );
     });
 
@@ -209,64 +205,55 @@ describe('Publisher', () => {
     });
 
     it('should publish to multiple exchanges', async () => {
-      await publisher.publishToMany(
-        ['exchange1', 'exchange2', 'exchange3'],
-        'event',
-        { data: 'test' },
-      );
+      await publisher.publishToMany(['exchange1', 'exchange2', 'exchange3'], 'event', {
+        data: 'test',
+      });
 
       expect(mockChannel.publish).toHaveBeenCalledTimes(3);
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'exchange1',
         'event',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'exchange2',
         'event',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'exchange3',
         'event',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
     });
 
     it('should throw ValidationError for empty array', async () => {
-      await expect(publisher.publishToMany([], 'event', {})).rejects.toThrow(
-        ValidationError,
-      );
+      await expect(publisher.publishToMany([], 'event', {})).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for non-array', async () => {
-      await expect(
-        publisher.publishToMany(null as any, 'event', {}),
-      ).rejects.toThrow(ValidationError);
+      await expect(publisher.publishToMany(null as any, 'event', {})).rejects.toThrow(
+        ValidationError
+      );
     });
 
     it('should support custom routing key', async () => {
-      await publisher.publishToMany(
-        ['ex1', 'ex2'],
-        'event',
-        {},
-        { routingKey: 'custom' },
-      );
+      await publisher.publishToMany(['ex1', 'ex2'], 'event', {}, { routingKey: 'custom' });
 
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'ex1',
         'custom',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'ex2',
         'custom',
         expect.any(Buffer),
-        expect.any(Object),
+        expect.any(Object)
       );
     });
   });
@@ -323,16 +310,8 @@ describe('Publisher', () => {
 
       await publisher.publish('test', {});
 
-      expect(mockChannel.assertExchange).toHaveBeenCalledWith(
-        'events',
-        'topic',
-        { durable: true },
-      );
-      expect(mockChannel.assertExchange).toHaveBeenCalledWith(
-        'logs',
-        'fanout',
-        { durable: false },
-      );
+      expect(mockChannel.assertExchange).toHaveBeenCalledWith('events', 'topic', { durable: true });
+      expect(mockChannel.assertExchange).toHaveBeenCalledWith('logs', 'fanout', { durable: false });
     });
   });
 });

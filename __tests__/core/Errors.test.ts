@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { HermesError, ConnectionError, TimeoutError, ChannelError, ValidationError } from '../../src/core/types/Errors';
+import {
+  HermesError,
+  ConnectionError,
+  TimeoutError,
+  ChannelError,
+  ValidationError,
+} from '../../src/core/types/Errors';
 
 describe('Errors', () => {
   describe('HermesError', () => {

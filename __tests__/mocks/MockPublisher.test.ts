@@ -27,29 +27,35 @@ describe('MockPublisher', () => {
     });
 
     it('should accept custom exchange in options', async () => {
-      await mockPublisher.publish('payment.received', { amount: 100 }, {
-        exchange: 'payments'
-      });
+      await mockPublisher.publish(
+        'payment.received',
+        { amount: 100 },
+        {
+          exchange: 'payments',
+        }
+      );
 
       const events = mockPublisher.getPublishedEvents();
       expect(events[0].exchange).toBe('payments');
     });
 
     it('should validate event name is not empty', async () => {
-      await expect(
-        mockPublisher.publish('', { data: 'test' })
-      ).rejects.toThrow(ValidationError);
+      await expect(mockPublisher.publish('', { data: 'test' })).rejects.toThrow(ValidationError);
     });
 
     it('should track metadata in options', async () => {
-      await mockPublisher.publish('event.test', { id: 1 }, {
-        metadata: { source: 'test', version: '1.0' }
-      });
+      await mockPublisher.publish(
+        'event.test',
+        { id: 1 },
+        {
+          metadata: { source: 'test', version: '1.0' },
+        }
+      );
 
       const events = mockPublisher.getPublishedEvents();
-      expect(events[0].options?.metadata).toEqual({ 
-        source: 'test', 
-        version: '1.0' 
+      expect(events[0].options?.metadata).toEqual({
+        source: 'test',
+        version: '1.0',
       });
     });
 
@@ -76,9 +82,13 @@ describe('MockPublisher', () => {
     });
 
     it('should accept persistent option', async () => {
-      await mockPublisher.publish('durable.event', { id: 1 }, {
-        persistent: true
-      });
+      await mockPublisher.publish(
+        'durable.event',
+        { id: 1 },
+        {
+          persistent: true,
+        }
+      );
 
       const events = mockPublisher.getPublishedEvents();
       expect(events[0].options?.persistent).toBe(true);
@@ -87,31 +97,27 @@ describe('MockPublisher', () => {
 
   describe('publishToMany', () => {
     it('should publish same event to multiple exchanges', async () => {
-      await mockPublisher.publishToMany(
-        ['exchange1', 'exchange2', 'exchange3'],
-        'multi.event',
-        { data: 'shared' }
-      );
+      await mockPublisher.publishToMany(['exchange1', 'exchange2', 'exchange3'], 'multi.event', {
+        data: 'shared',
+      });
 
       const events = mockPublisher.getPublishedEvents();
       expect(events).toHaveLength(3);
       expect(events[0].exchange).toBe('exchange1');
       expect(events[1].exchange).toBe('exchange2');
       expect(events[2].exchange).toBe('exchange3');
-      expect(events.every(e => e.eventName === 'multi.event')).toBe(true);
-      expect(events.every(e => e.data.data === 'shared')).toBe(true);
+      expect(events.every((e) => e.eventName === 'multi.event')).toBe(true);
+      expect(events.every((e) => e.data.data === 'shared')).toBe(true);
     });
 
     it('should validate exchanges array is not empty', async () => {
-      await expect(
-        mockPublisher.publishToMany([], 'event', {})
-      ).rejects.toThrow(ValidationError);
+      await expect(mockPublisher.publishToMany([], 'event', {})).rejects.toThrow(ValidationError);
     });
 
     it('should validate event name is not empty', async () => {
-      await expect(
-        mockPublisher.publishToMany(['exchange1'], '', {})
-      ).rejects.toThrow(ValidationError);
+      await expect(mockPublisher.publishToMany(['exchange1'], '', {})).rejects.toThrow(
+        ValidationError
+      );
     });
 
     it('should track metadata for multi-exchange events', async () => {
@@ -284,7 +290,7 @@ describe('MockPublisher', () => {
       const eventData: UserCreatedEvent = {
         userId: 123,
         email: 'user@example.com',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
       await mockPublisher.publish<UserCreatedEvent>('user.created', eventData);
@@ -300,17 +306,17 @@ describe('MockPublisher', () => {
       // Simulate a user registration flow
       await mockPublisher.publish('user.registered', {
         userId: 1,
-        email: 'john@example.com'
+        email: 'john@example.com',
       });
 
       await mockPublisher.publish('email.sent', {
         to: 'john@example.com',
-        type: 'welcome'
+        type: 'welcome',
       });
 
       await mockPublisher.publish('analytics.tracked', {
         event: 'registration',
-        userId: 1
+        userId: 1,
       });
 
       // Verify the sequence of events
@@ -341,19 +347,23 @@ describe('MockPublisher', () => {
 
       // Verify all have the same data
       const allEvents = mockPublisher.getPublishedEvents();
-      expect(allEvents.every(e => e.data.orderId === 999)).toBe(true);
+      expect(allEvents.every((e) => e.data.orderId === 999)).toBe(true);
     });
 
     it('should support verifying event metadata', async () => {
-      await mockPublisher.publish('critical.event', { error: 'Database down' }, {
-        exchange: 'alerts',
-        persistent: true,
-        metadata: {
-          severity: 'high',
-          source: 'health-check',
-          timestamp: Date.now()
+      await mockPublisher.publish(
+        'critical.event',
+        { error: 'Database down' },
+        {
+          exchange: 'alerts',
+          persistent: true,
+          metadata: {
+            severity: 'high',
+            source: 'health-check',
+            timestamp: Date.now(),
+          },
         }
-      });
+      );
 
       const alertEvents = mockPublisher.getEventsByExchange('alerts');
       expect(alertEvents[0].options?.persistent).toBe(true);
@@ -373,7 +383,7 @@ describe('MockPublisher', () => {
       expect(events).toHaveLength(3);
 
       // Verify all have same requestId (simulating idempotency key)
-      expect(events.every(e => e.data.requestId === 'req-123')).toBe(true);
+      expect(events.every((e) => e.data.requestId === 'req-123')).toBe(true);
     });
   });
 });

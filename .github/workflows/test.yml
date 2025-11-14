@@ -17,7 +17,6 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v2
         with:
-          # Use pnpm v10 to match repository packageManager (pnpm@10.13.1)
           version: 10.13.1
 
       - name: Setup Node.js

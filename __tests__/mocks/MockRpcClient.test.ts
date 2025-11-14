@@ -29,9 +29,9 @@ describe('MockRpcClient', () => {
     });
 
     it('should throw error if command is not mocked', async () => {
-      await expect(
-        mockClient.send('UNKNOWN_COMMAND', {})
-      ).rejects.toThrow('No mock configured for command: UNKNOWN_COMMAND');
+      await expect(mockClient.send('UNKNOWN_COMMAND', {})).rejects.toThrow(
+        'No mock configured for command: UNKNOWN_COMMAND'
+      );
     });
 
     it('should handle multiple different commands', async () => {
@@ -60,27 +60,21 @@ describe('MockRpcClient', () => {
       const expectedError = new Error('User not found');
       mockClient.mockError('GET_USER', expectedError);
 
-      await expect(
-        mockClient.send('GET_USER', { id: 999 })
-      ).rejects.toThrow('User not found');
+      await expect(mockClient.send('GET_USER', { id: 999 })).rejects.toThrow('User not found');
     });
 
     it('should throw ValidationError when configured', async () => {
       const validationError = new ValidationError('Invalid input');
       mockClient.mockError('CREATE_USER', validationError);
 
-      await expect(
-        mockClient.send('CREATE_USER', { name: '' })
-      ).rejects.toThrow(ValidationError);
+      await expect(mockClient.send('CREATE_USER', { name: '' })).rejects.toThrow(ValidationError);
     });
 
     it('should normalize command name to uppercase for errors', async () => {
       const error = new Error('Test error');
       mockClient.mockError('delete_user', error);
 
-      await expect(
-        mockClient.send('DELETE_USER', { id: 1 })
-      ).rejects.toThrow('Test error');
+      await expect(mockClient.send('DELETE_USER', { id: 1 })).rejects.toThrow('Test error');
     });
   });
 
@@ -88,14 +82,12 @@ describe('MockRpcClient', () => {
     it('should validate command is not empty', async () => {
       mockClient.mockResponse('TEST', { ok: true });
 
-      await expect(
-        mockClient.send('', {})
-      ).rejects.toThrow(ValidationError);
+      await expect(mockClient.send('', {})).rejects.toThrow(ValidationError);
     });
 
     it('should handle AbortSignal timeout', async () => {
       mockClient.mockResponse('SLOW_COMMAND', { result: 'done' });
-      
+
       const controller = new AbortController();
       controller.abort();
 
@@ -130,7 +122,7 @@ describe('MockRpcClient', () => {
 
     it('should track timestamps in call history', async () => {
       mockClient.mockResponse('TEST', { ok: true });
-      
+
       const before = Date.now();
       await mockClient.send('TEST', {});
       const after = Date.now();
@@ -218,7 +210,7 @@ describe('MockRpcClient', () => {
   describe('clear', () => {
     it('should clear all call history', async () => {
       mockClient.mockResponse('TEST', { ok: true });
-      
+
       await mockClient.send('TEST', {});
       expect(mockClient.getCallHistory()).toHaveLength(1);
 
@@ -258,18 +250,20 @@ describe('MockRpcClient', () => {
 
   describe('type safety', () => {
     it('should maintain type safety for request/response', async () => {
-      interface UserRequest { userId: number }
-      interface UserResponse { id: number; name: string }
+      interface UserRequest {
+        userId: number;
+      }
+      interface UserResponse {
+        id: number;
+        name: string;
+      }
 
       mockClient.mockResponse('GET_USER', {
         id: 1,
-        name: 'John'
+        name: 'John',
       } as UserResponse);
 
-      const response = await mockClient.send<UserRequest, UserResponse>(
-        'GET_USER',
-        { userId: 1 }
-      );
+      const response = await mockClient.send<UserRequest, UserResponse>('GET_USER', { userId: 1 });
 
       // TypeScript should enforce these types
       expect(response.id).toBe(1);
@@ -284,12 +278,12 @@ describe('MockRpcClient', () => {
       mockClient.mockResponse('CREATE_SESSION', { sessionId: 'abc-123' });
 
       // User's service would call these
-      const validationResult = await mockClient.send('VALIDATE_USER', { 
-        username: 'john', 
-        password: 'secret' 
+      const validationResult = await mockClient.send('VALIDATE_USER', {
+        username: 'john',
+        password: 'secret',
       });
-      const sessionResult = await mockClient.send('CREATE_SESSION', { 
-        userId: validationResult.userId 
+      const sessionResult = await mockClient.send('CREATE_SESSION', {
+        userId: validationResult.userId,
       });
 
       // Verify the calls were made correctly

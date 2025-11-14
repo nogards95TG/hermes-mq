@@ -8,7 +8,7 @@ Thank you for considering contributing to Hermes MQ! 🎉
 2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/hermes-mq.git`
 3. Install dependencies: `pnpm install`
 4. Start RabbitMQ: `docker-compose up -d`
-5. Build packages: `pnpm build`
+5. Build package: `pnpm build`
 6. Run tests: `pnpm test`
 
 ## Development Workflow
@@ -34,8 +34,7 @@ pnpm pre-push
 This runs:
 - 📦 Dependency installation
 - 🏗️ Build
-- 🔤 Linting
-- 📝 Type checking
+-  Type checking
 - 🧪 Unit tests
 - 🔗 Integration tests
 
@@ -60,7 +59,7 @@ pnpm test:coverage
 
 ### Code Style
 
-We use ESLint and Prettier for code formatting. Run:
+We use Prettier for code formatting. Run:
 
 ```bash
 # Check formatting
@@ -68,25 +67,9 @@ pnpm format:check
 
 # Fix formatting
 pnpm format
-
-# Lint code
-pnpm lint
-
-# Fix lint errors
-pnpm lint:fix
 ```
 
-### Changesets
-
-We use [Changesets](https://github.com/changesets/changesets) for version management.
-
-To add a changeset:
-
-```bash
-pnpm changeset
-```
-
-Follow the prompts to describe your changes.
+All code is written in TypeScript with strict mode enabled.
 
 ## Testing Guidelines
 
