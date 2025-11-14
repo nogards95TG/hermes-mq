@@ -139,6 +139,17 @@ export class ConnectionManager extends EventEmitter {
     if (!this.connection) return;
 
     this.connection.on('error', (error: Error) => {
+      // "Unexpected close" errors occur when connections are closed abruptly
+      // (e.g., during test cleanup or when RabbitMQ restarts)
+      // Log as warning but don't propagate to avoid crashing the application
+      if (error.message === 'Unexpected close') {
+        this.logger.warn('Connection closed unexpectedly', {
+          message: error.message,
+          reconnect: this.config.reconnect,
+        });
+        return;
+      }
+
       this.logger.error('Connection error', error);
       this.emit('error', error);
     });
