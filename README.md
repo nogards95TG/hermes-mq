@@ -18,15 +18,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
 - 📦 **Zero Dependencies**: Only depends on `amqplib`
 
-## 📦 Packages
-
-This monorepo contains the following packages:
-
-- **[@hermes/core](./packages/core)**: Connection management, retry logic, types
-- **@hermes/client**: RPC client, Publisher (includes testing mocks)
-- **@hermes/server**: RPC server, Subscriber, command routing
-
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -47,14 +39,14 @@ RabbitMQ will be available at:
 ### Installation
 
 ```bash
-# Using pnpm (recommended)
-pnpm add @hermes/core @hermes/client @hermes/server
-
 # Using npm
-npm install @hermes/core @hermes/client @hermes/server
+npm install hermes-mq
 
 # Using yarn
-yarn add @hermes/core @hermes/client @hermes/server
+yarn add hermes-mq
+
+# Using pnpm
+pnpm add hermes-mq
 ```
 
 ## 📖 Usage Examples
@@ -64,7 +56,7 @@ yarn add @hermes/core @hermes/client @hermes/server
 **Server:**
 
 ```typescript
-import { RpcServer } from '@hermes/server';
+import { RpcServer } from 'hermes-mq';
 
 const server = new RpcServer({
   connection: { url: 'amqp://localhost' },
@@ -88,7 +80,7 @@ await server.start();
 **Client:**
 
 ```typescript
-import { RpcClient } from '@hermes/client';
+import { RpcClient } from 'hermes-mq';
 
 const client = new RpcClient({
   connection: { url: 'amqp://localhost' },
@@ -106,7 +98,7 @@ console.log(user);
 **Publisher:**
 
 ```typescript
-import { Publisher } from '@hermes/client';
+import { Publisher } from 'hermes-mq';
 
 const publisher = new Publisher({
   connection: { url: 'amqp://localhost' },
@@ -122,7 +114,7 @@ await publisher.publish('user.created', {
 **Subscriber:**
 
 ```typescript
-import { Subscriber } from '@hermes/client';
+import { Subscriber } from 'hermes-mq';
 
 const subscriber = new Subscriber({
   connection: { url: 'amqp://localhost' },
@@ -156,7 +148,7 @@ pnpm install
 # Start RabbitMQ
 docker-compose up -d
 
-# Build all packages
+# Build package
 pnpm build
 
 # Run tests
@@ -164,43 +156,25 @@ pnpm test
 
 # Run tests in watch mode
 pnpm test:watch
-
-# Run linter
-pnpm lint
 ```
 
 ### Project Structure
 
 ```
 hermes-mq/
-├── examples/          # Usage examples
-├── packages/
-│   ├── core/          # Core connection and utilities
-│   ├── client/        # RPC client and Pub/Sub
-│   ├── server/        # RPC server
-│   └── hermes-mq/     # Single export package
+├── src/
+│   ├── core/          # Connection management and utilities
+│   ├── client/        # RPC client and Publisher
+│   ├── server/        # RPC server and Subscriber
+│   └── index.ts       # Main exports
+├── __tests__/         # Unit and integration tests
+├── dist/              # Built files (ESM + CJS + types)
 └── docker-compose.yml # RabbitMQ setup
 ```
 
 ## 🧪 Testing
 
-Hermes MQ provides comprehensive testing utilities to help you test your messaging code.
-
-### Using Mock Implementations
-
-```typescript
-import { MockRpcClient, MockPublisher } from '@hermes/client';
-
-// Mock RPC responses
-const mockClient = new MockRpcClient();
-mockClient.mockResponse('GET_USER', { id: 123, name: 'John' });
-const user = await mockClient.send('GET_USER', { id: 123 });
-
-// Mock event publishing
-const mockPublisher = new MockPublisher();
-await mockPublisher.publish('user.created', { id: 123 });
-const events = mockPublisher.getPublishedEvents();
-```
+Hermes MQ is thoroughly tested with 189 tests (164 unit + 25 integration).
 
 ### Running Tests
 
@@ -208,7 +182,7 @@ const events = mockPublisher.getPublishedEvents();
 # Run all tests
 pnpm test
 
-# Run unit tests
+# Run unit tests only
 pnpm test:unit
 
 # Run integration tests (requires RabbitMQ)
@@ -218,10 +192,12 @@ pnpm test:integration
 pnpm test:coverage
 ```
 
+Integration tests use [Testcontainers](https://testcontainers.com/) to spin up real RabbitMQ instances.
+
 ## 📚 Documentation
 
-- [Examples](./examples) - Working code examples
 - [Contributing Guide](./CONTRIBUTING.md) - How to contribute
+- [API Documentation](./src) - TypeScript source with JSDoc comments
 
 ## 🔄 Continuous Integration
 
