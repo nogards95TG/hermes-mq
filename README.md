@@ -18,7 +18,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
 - 📦 **Zero Dependencies**: Only depends on `amqplib`
 
-##  Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -132,6 +132,37 @@ subscriber
 
 await subscriber.start();
 ```
+
+## 🧩 Middleware (Express-style)
+
+Hermes MQ supports an Express-style middleware model for both Pub/Sub and RPC flows. Middlewares are small functions that run in an "onion" order (before/after) and can modify the message context, short-circuit the pipeline, or perform side effects like logging, metrics, or auth checks.
+
+Key concepts:
+
+- Global middleware: registered with `.use(...middlewares)` on `Publisher`, `RpcClient`, `Subscriber`, or `RpcServer`. They apply to all outgoing/incoming messages for that instance.
+- Per-handler / per-request middleware: passed when registering a handler or sending a request. Examples:
+  - `subscriber.on('event.name', mw1, mw2, handler)`
+  - `server.registerHandler('METHOD', mw1, handler)`
+  - `client.send('METHOD', payload, [mw1, mw2])`
+- Middleware signature (TypeScript):
+
+```ts
+type Middleware<T = any> = (
+  message: T,
+  ctx: MessageContext,
+  next: () => Promise<any>
+) => Promise<any> | any;
+```
+
+- Handler (final function) signature for RPC server handlers remains backward-compatible: `(data, metadata) => Promise|any`. The library wraps legacy handlers so you can keep existing code.
+
+Behavior notes and compatibility guarantees:
+
+- `.use(...)` performs defensive validation and will throw a `ValidationError` if a non-function is passed. This is intentional to fail fast when middleware arguments are invalid.
+- When no middleware is attached to a `Subscriber.on(...)` or `RpcServer.registerHandler(...)`, the original (legacy) handler is stored directly to preserve semantics and test spyability.
+- Middleware order: global middlewares run first, then per-handler/per-request middlewares, then the final handler. Middlewares form an "onion" so you can run logic before and after the downstream call using `await next()`.
+
+See the `examples/` folder for simple usage examples:
 
 ## 🏗️ Development
 

@@ -9,6 +9,11 @@ import {
   ResponseEnvelope,
   Serializer,
   JsonSerializer,
+  Middleware,
+  Handler,
+  isHandler,
+  MessageContext,
+  compose,
 } from '../../core';
 
 /**
@@ -75,7 +80,9 @@ export class RpcServer {
   private channel: amqp.ConfirmChannel | null = null;
   private logger: Logger;
   private serializer: Serializer;
-  private handlers = new Map<string, RpcHandler>();
+  // Store per-command composed handler (globalMiddlewares + per-handler middlewares + adapter)
+  private handlers = new Map<string, Handler>();
+  private globalMiddlewares: Middleware[] = [];
   private isRunning = false;
   private consumerTag: string | null = null;
   private inFlightMessages = new Set<string>();
@@ -93,35 +100,56 @@ export class RpcServer {
   }
 
   /**
-   * Register a command handler
-   *
-   * @param command - The command name (case-insensitive)
-   * @param handler - Function that processes the request and returns a response
-   * @throws {ValidationError} When command or handler is invalid
+   * Add one or more global middleware that will be executed for every handler
    *
    * @example
-   * ```typescript
-   * server.registerHandler('CALCULATE', (data) => {
-   *   return { result: data.a + data.b };
-   * });
-   *
-   * server.registerHandler('GET_USER', async (data) => {
-   *   const user = await db.getUser(data.userId);
-   *   return user;
-   * });
-   * ```
+   * server.use(middleware1)
+   * server.use(middleware1, middleware2, middleware3)
    */
-  registerHandler<TRequest = any, TResponse = any>(
-    command: string,
-    handler: RpcHandler<TRequest, TResponse>
-  ): void {
+  use(...middlewares: Middleware[]): this {
+    for (const m of middlewares) {
+      if (typeof m !== 'function') {
+        throw new ValidationError('Middleware must be a function');
+      }
+      this.globalMiddlewares.push(m);
+    }
+
+    return this;
+  }
+
+  /**
+   * Register a command handler with optional middleware
+   * Supports multiple signatures for flexibility
+   *
+   * @example
+   * // Only handler
+   * server.registerHandler('GET_USER', handler)
+   *
+   * // Handler with middleware
+   * server.registerHandler('GET_USER', middleware1, middleware2, handler)
+   */
+  // Generic overload to allow any call shape; runtime validation will throw for invalid inputs
+  registerHandler(command: string, handler: Handler): this;
+  registerHandler(command: string, ...stack: any[]): this;
+  registerHandler(command: string, ...stack: [...Middleware[], Handler]): this;
+  registerHandler(command: string, ...stack: any[]): this {
     if (!command) {
       throw new ValidationError('Command is required');
     }
 
-    if (typeof handler !== 'function') {
-      throw new ValidationError('Handler must be a function');
+    // Validation: at least one element and the last must be a handler
+    if (stack.length === 0) {
+      throw new ValidationError('At least one handler is required');
     }
+
+    const lastFn = stack[stack.length - 1];
+    if (!isHandler(lastFn)) {
+      throw new ValidationError('Last argument must be a handler (function with max 2 parameters)');
+    }
+
+    // Separate per-handler middlewares (all but last) and user handler (last)
+    const perHandlerMiddlewares: Middleware[] = stack.slice(0, -1) as Middleware[];
+    const userHandler = lastFn;
 
     const normalizedCommand = command.toUpperCase();
 
@@ -129,14 +157,29 @@ export class RpcServer {
       this.logger.warn(`Overwriting existing handler for command: ${normalizedCommand}`);
     }
 
-    this.handlers.set(normalizedCommand, handler);
+    // Adapter: at runtime the MessageContext will contain the request metadata (ctx['metadata']).
+    // The adapter calls the legacy user handler with (data, metadata).
+    const adapter: Handler = async (message: any, ctx: MessageContext) => {
+      const metadata = (ctx as any).metadata;
+      return await userHandler(message, metadata);
+    };
+
+    // Compose global middlewares + per-handler middlewares + adapter at registration time for runtime efficiency
+    const fullStack = [...this.globalMiddlewares, ...perHandlerMiddlewares, adapter] as [
+      ...Middleware[],
+      Handler,
+    ];
+    const composed = compose(...fullStack);
+
+    this.handlers.set(normalizedCommand, composed);
     this.logger.debug(`Handler registered for command: ${normalizedCommand}`);
+    return this;
   }
 
   /**
    * Unregister a command handler
    */
-  unregisterHandler(command: string): void {
+  unregisterHandler(command: string): this {
     const normalizedCommand = command.toUpperCase();
     const deleted = this.handlers.delete(normalizedCommand);
 
@@ -145,6 +188,7 @@ export class RpcServer {
     } else {
       this.logger.warn(`No handler found for command: ${normalizedCommand}`);
     }
+    return this;
   }
 
   /**
@@ -213,6 +257,7 @@ export class RpcServer {
 
     const correlationId = msg.properties.correlationId;
     const replyTo = msg.properties.replyTo;
+    let responseSent = false;
 
     // Track in-flight message
     if (correlationId) {
@@ -232,18 +277,51 @@ export class RpcServer {
         correlationId,
       });
 
-      // Find handler
-      const handler = this.handlers.get(request.command.toUpperCase());
+      // Find composed handler registered for this command
+      const registeredHandler = this.handlers.get(request.command.toUpperCase());
 
-      if (!handler) {
+      if (!registeredHandler) {
         throw new Error(`No handler registered for command: ${request.command}`);
       }
 
-      // Execute handler
-      const result = await handler(request.data, request.metadata);
+      // Create context
+      const context: MessageContext = {
+        messageId: msg.properties.messageId || correlationId || 'unknown',
+        timestamp: new Date(msg.properties.timestamp || Date.now()),
+        method: request.command,
+        headers: msg.properties.headers || {},
+        reply: async (data: any) => {
+          if (responseSent) return;
+          responseSent = true;
+          const response: ResponseEnvelope = {
+            id: request.id,
+            timestamp: Date.now(),
+            success: true,
+            data,
+          };
+          const content = this.serializer.encode(response);
+          if (replyTo) {
+            this.channel!.sendToQueue(replyTo, content, {
+              correlationId,
+              contentType: 'application/json',
+            });
+          }
+        },
+        ack: async () => {
+          if (this.channel) this.channel.ack(msg);
+        },
+        nack: async (requeue = true) => {
+          if (this.channel) this.channel.nack(msg, false, requeue);
+        },
+      };
+      // Attach request-specific metadata into the context so adapters can access it
+      (context as any).metadata = request.metadata;
 
-      // Send success response
-      if (replyTo) {
+      // Execute the composed handler (already composed at registration time)
+      const result = await registeredHandler(request.data, context as MessageContext);
+
+      // Send response if not already sent by reply()
+      if (!responseSent && replyTo) {
         const response: ResponseEnvelope = {
           id: request.id,
           timestamp: Date.now(),
@@ -264,13 +342,15 @@ export class RpcServer {
         });
       }
 
-      // Acknowledge message
-      this.channel.ack(msg);
+      // Acknowledge message if not already done
+      if (this.channel && !responseSent) {
+        this.channel.ack(msg);
+      }
     } catch (error) {
       this.logger.error('Error handling request', error as Error);
 
       // Send error response
-      if (replyTo && this.channel) {
+      if (replyTo && this.channel && !responseSent) {
         try {
           const response: ResponseEnvelope = {
             id: correlationId || 'unknown',

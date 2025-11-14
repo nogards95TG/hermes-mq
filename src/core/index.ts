@@ -35,3 +35,8 @@ export {
   TimeoutError,
   ValidationError,
 } from './types/Errors';
+
+// Middleware
+export type { MessageContext, Middleware, Handler } from './middleware/types';
+export { compose } from './middleware/compose';
+export { isHandler, isMiddleware } from './middleware/guards';

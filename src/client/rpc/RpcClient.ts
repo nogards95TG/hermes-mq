@@ -12,6 +12,7 @@ import {
   Serializer,
   JsonSerializer,
 } from '../../core';
+import { Middleware, Handler, MessageContext, compose } from '../../core/middleware';
 
 /**
  * RPC Client configuration
@@ -79,6 +80,7 @@ export class RpcClient {
   private isReady = false;
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
+  private globalMiddlewares: Middleware[] = [];
 
   /**
    * Create a new RPC client instance
@@ -90,6 +92,24 @@ export class RpcClient {
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
+  }
+
+  /**
+   * Add one or more global middleware that will be executed for every request
+   *
+   * @example
+   * client.use(middleware1)
+   * client.use(middleware1, middleware2, middleware3)
+   */
+  use(...middlewares: Middleware[]): this {
+    for (const m of middlewares) {
+      if (typeof m !== 'function') {
+        throw new ValidationError('Middleware must be a function', {});
+      }
+      this.globalMiddlewares.push(m);
+    }
+
+    return this;
   }
 
   /**
@@ -145,8 +165,9 @@ export class RpcClient {
   /**
    * Send an RPC request and wait for response
    *
-   * @param command - The command name (case-insensitive)
+   * @param command - The command name
    * @param data - The request payload
+   * @param middlewaresOrOptions - Either an array of per-publish middlewares or a `PublishOptions` object
    * @param options - Additional options for the request
    * @param options.timeout - Custom timeout for this request (overrides default)
    * @param options.metadata - Additional metadata to send with the request
@@ -185,6 +206,34 @@ export class RpcClient {
       metadata?: Record<string, any>;
       signal?: AbortSignal;
     }
+  ): Promise<TResponse>;
+
+  async send<TRequest = any, TResponse = any>(
+    command: string,
+    data: TRequest,
+    middlewares: Middleware[],
+    options?: {
+      timeout?: number;
+      metadata?: Record<string, any>;
+      signal?: AbortSignal;
+    }
+  ): Promise<TResponse>;
+
+  async send<TRequest = any, TResponse = any>(
+    command: string,
+    data: TRequest,
+    middlewaresOrOptions?:
+      | Middleware[]
+      | {
+          timeout?: number;
+          metadata?: Record<string, any>;
+          signal?: AbortSignal;
+        },
+    options?: {
+      timeout?: number;
+      metadata?: Record<string, any>;
+      signal?: AbortSignal;
+    }
   ): Promise<TResponse> {
     if (!command) {
       throw new ValidationError('Command is required');
@@ -197,71 +246,106 @@ export class RpcClient {
     }
 
     const correlationId = randomUUID();
-    const timeout = options?.timeout || this.config.timeout;
+    let requestMiddlewares: Middleware[] = [];
+    let requestOptions: {
+      timeout?: number;
+      metadata?: Record<string, any>;
+      signal?: AbortSignal;
+    } = {};
 
-    // Create request envelope
-    const request: RequestEnvelope<TRequest> = {
-      id: correlationId,
-      command: command.toUpperCase(),
-      timestamp: Date.now(),
-      data,
-      metadata: options?.metadata,
+    if (Array.isArray(middlewaresOrOptions)) {
+      requestMiddlewares = middlewaresOrOptions;
+      requestOptions = options || {};
+    } else {
+      requestOptions = middlewaresOrOptions || {};
+    }
+
+    const timeout = requestOptions.timeout || this.config.timeout;
+
+    // Handler finale che fa l'invio effettivo
+    const sendHandler: Handler = async (message, context) => {
+      // Create request envelope
+      const request: RequestEnvelope<TRequest> = {
+        id: correlationId,
+        command: command.toUpperCase(),
+        timestamp: Date.now(),
+        data: message,
+        metadata: requestOptions.metadata,
+      };
+
+      return new Promise<TResponse>((resolve, reject) => {
+        // Setup timeout
+        const timeoutHandle = setTimeout(() => {
+          this.pendingRequests.delete(correlationId);
+          reject(
+            new TimeoutError(`RPC request timeout after ${timeout}ms`, {
+              command,
+              timeout,
+              correlationId,
+            })
+          );
+        }, timeout);
+
+        // Track pending request
+        this.pendingRequests.set(correlationId, {
+          resolve,
+          reject,
+          timeout: timeoutHandle,
+        });
+
+        // Handle AbortSignal
+        if (requestOptions.signal) {
+          requestOptions.signal.addEventListener('abort', () => {
+            const pending = this.pendingRequests.get(correlationId);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              this.pendingRequests.delete(correlationId);
+              reject(new Error('Request aborted'));
+            }
+          });
+        }
+
+        try {
+          // Send request
+          const content = this.serializer.encode(request);
+
+          this.channel!.sendToQueue(this.config.queueName, content, {
+            correlationId,
+            replyTo: this.replyQueue!,
+            persistent: false,
+            contentType: 'application/json',
+            headers: context.headers,
+          });
+
+          this.logger.debug('RPC request sent', {
+            command,
+            correlationId,
+            queueName: this.config.queueName,
+          });
+        } catch (error) {
+          clearTimeout(timeoutHandle);
+          this.pendingRequests.delete(correlationId);
+          reject(error);
+        }
+      });
     };
 
-    return new Promise<TResponse>((resolve, reject) => {
-      // Setup timeout
-      const timeoutHandle = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(
-          new TimeoutError(`RPC request timeout after ${timeout}ms`, {
-            command,
-            timeout,
-            correlationId,
-          })
-        );
-      }, timeout);
+    // Compone middleware globali + specifici + handler
+    const stack = [...this.globalMiddlewares, ...requestMiddlewares, sendHandler] as [
+      ...Middleware[],
+      Handler,
+    ];
+    const composed = compose(...stack);
 
-      // Track pending request
-      this.pendingRequests.set(correlationId, {
-        resolve,
-        reject,
-        timeout: timeoutHandle,
-      });
+    // Crea context
+    const context: MessageContext = {
+      messageId: correlationId,
+      timestamp: new Date(),
+      method: command,
+      headers: {},
+    };
 
-      // Handle AbortSignal
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          const pending = this.pendingRequests.get(correlationId);
-          if (pending) {
-            clearTimeout(pending.timeout);
-            this.pendingRequests.delete(correlationId);
-            reject(new Error('Request aborted'));
-          }
-        });
-      }
-
-      try {
-        // Send request
-        const content = this.serializer.encode(request);
-
-        this.channel!.sendToQueue(this.config.queueName, content, {
-          correlationId,
-          replyTo: this.replyQueue!,
-          persistent: false,
-          contentType: 'application/json',
-        });
-
-        this.logger.debug('RPC request sent', {
-          command,
-          correlationId,
-          queueName: this.config.queueName,
-        });
-      } catch (error) {
-        clearTimeout(timeoutHandle);
-        this.pendingRequests.delete(correlationId);
-        reject(error);
-      }
-    });
+    return composed(data, context);
   }
 
   /**

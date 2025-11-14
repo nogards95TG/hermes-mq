@@ -9,6 +9,12 @@ import {
   ValidationError,
   type RetryConfig,
 } from '../../core';
+import {
+  compose,
+  type MessageContext,
+  type Middleware,
+  type Handler as CoreHandler,
+} from '../../core';
 
 /**
  * Subscriber configuration
@@ -106,9 +112,29 @@ export class Subscriber {
     exchangeOptions?: SubscriberConfig['exchangeOptions'];
   };
   private handlers: HandlerRegistration[] = [];
+  // Global middlewares applied to every registered handler (in registration order)
+  private globalMiddlewares: Middleware[] = [];
   private consumerTag?: string;
   private running = false;
   private generatedQueueName?: string;
+
+  /**
+   * Add one or more global middleware that will be executed for every handler
+   *
+   * @example
+   * server.use(middleware1)
+   * server.use(middleware1, middleware2, middleware3)
+   */
+  use(...mws: Middleware[]): this {
+    for (const m of mws) {
+      if (typeof m !== 'function') {
+        throw new ValidationError('Middleware must be a function', {});
+      }
+      this.globalMiddlewares.push(m);
+    }
+
+    return this;
+  }
 
   /**
    * Create a new Subscriber instance
@@ -170,24 +196,92 @@ export class Subscriber {
    * subscriber.on('user.#', handler); // matches 'user.created', 'user.profile.updated'
    * ```
    */
-  on<T = any>(eventPattern: string, handler: EventHandler<T>): this {
+  on<T = any>(eventPattern: string, handler: EventHandler<T>): this;
+  on<T = any>(
+    eventPattern: string,
+    ...middlewaresAndHandler: [...Middleware[], EventHandler<T>]
+  ): this;
+  on(eventPattern: string, ...args: any[]): this {
     if (!eventPattern || typeof eventPattern !== 'string') {
       throw new ValidationError('Event pattern must be a non-empty string', {});
     }
 
-    if (typeof handler !== 'function') {
+    if (args.length === 0) {
+      throw new ValidationError('Handler is required', {});
+    }
+
+    const last = args[args.length - 1];
+    if (typeof last !== 'function') {
       throw new ValidationError('Handler must be a function', {});
     }
 
+    const userHandler: EventHandler = last as EventHandler;
+    const perHandlerMiddlewares: Middleware[] = args.slice(0, -1) as Middleware[];
+
     const regex = this.patternToRegex(eventPattern);
 
-    this.handlers.push({
-      pattern: eventPattern,
-      handler: handler as EventHandler,
-      regex,
-    });
+    // If there are no middlewares at all (global or per-handler), keep original handler as-is
+    if (this.globalMiddlewares.length === 0 && perHandlerMiddlewares.length === 0) {
+      this.handlers.push({
+        pattern: eventPattern,
+        handler: userHandler,
+        regex,
+      });
 
-    this.config.logger.debug(`Registered handler for pattern: ${eventPattern}`);
+      this.config.logger.debug(`Registered handler for pattern: ${eventPattern}`);
+
+      return this;
+    }
+
+    // Adapter: create a core Handler that calls the legacy EventHandler
+    const adapter: CoreHandler = (message: any, ctx: MessageContext) => {
+      const legacyCtx = {
+        eventName: ctx.eventName ?? ctx.routingKey ?? '',
+        timestamp: ctx.timestamp instanceof Date ? ctx.timestamp.getTime() : Date.now(),
+        metadata: (ctx as any).metadata,
+        rawMessage: (ctx as any).rawMessage,
+      };
+
+      return userHandler(message, legacyCtx as any);
+    };
+
+    const fullStack: [...Middleware[], CoreHandler] = [
+      ...(this.globalMiddlewares as Middleware[]),
+      ...(perHandlerMiddlewares as Middleware[]),
+      adapter as CoreHandler,
+    ];
+
+    const composed = compose(...(fullStack as any));
+
+    // Store an EventHandler wrapper that will create a MessageContext at runtime and call the composed core handler
+    const stored: EventHandler = (data, legacyCtx) => {
+      const raw = (legacyCtx as any).rawMessage as ConsumeMessage | undefined;
+
+      const msgCtx: MessageContext = {
+        messageId: (raw?.properties && (raw.properties as any).messageId) || randomUUID(),
+        timestamp: new Date((legacyCtx as any).timestamp ?? Date.now()),
+        routingKey: (legacyCtx as any).eventName,
+        eventName: (legacyCtx as any).eventName,
+        headers: (raw?.properties && (raw.properties as any).headers) || {},
+        // ack/nack will be bound to the current channel/raw message
+        ack: async () => {
+          if (this.channel && raw) await this.channel.ack(raw);
+        },
+        nack: async (requeue = false) => {
+          if (this.channel && raw) await this.channel.nack(raw, false, requeue);
+        },
+        // keep extensible
+      } as MessageContext;
+
+      (msgCtx as any).rawMessage = raw;
+      (msgCtx as any).metadata = (legacyCtx as any).metadata;
+
+      return composed(data, msgCtx) as any;
+    };
+
+    this.handlers.push({ pattern: eventPattern, handler: stored, regex });
+
+    this.config.logger.debug(`Registered handler with middleware for pattern: ${eventPattern}`);
 
     return this;
   }

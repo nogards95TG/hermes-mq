@@ -9,6 +9,7 @@ import {
   HermesError,
   type RetryConfig,
 } from '../../core';
+import { Middleware, Handler, MessageContext, compose } from '../../core/middleware';
 
 /**
  * Publisher configuration
@@ -78,6 +79,7 @@ export class Publisher {
   };
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
+  private globalMiddlewares: Middleware[] = [];
 
   /**
    * Create a new Publisher instance
@@ -128,76 +130,159 @@ export class Publisher {
   }
 
   /**
-   * Publish an event to an exchange
-   *
-   * @param eventName - The event name (used as routing key by default)
-   * @param data - The event payload
-   * @param options - Publishing options
-   * @param options.exchange - Target exchange (uses default if not specified)
-   * @param options.routingKey - Custom routing key (uses eventName if not specified)
-   * @param options.persistent - Whether to persist the message (default: true)
-   * @param options.metadata - Additional metadata to include
-   * @throws {ValidationError} When eventName is invalid
-   * @throws {HermesError} When publishing fails
+   * Add one or more global middleware that will be executed for every publish
    *
    * @example
-   * ```typescript
-   * // Basic publish
-   * await publisher.publish('user.created', { userId: '123' });
-   *
-   * // With custom routing key
-   * await publisher.publish('order.placed', orderData, {
-   *   routingKey: 'orders.high-priority'
-   * });
-   *
-   * // To specific exchange
-   * await publisher.publish('notification', data, {
-   *   exchange: 'notifications'
-   * });
-   * ```
+   * publisher.use(middleware1)
+   * publisher.use(middleware1, middleware2, middleware3)
    */
-  async publish<T = any>(eventName: string, data: T, options: PublishOptions = {}): Promise<void> {
-    if (!eventName || typeof eventName !== 'string') {
-      throw new ValidationError('Event name must be a non-empty string', {});
+  use(...middlewares: Middleware[]): this {
+    for (const m of middlewares) {
+      if (typeof m !== 'function') {
+        throw new ValidationError('Middleware must be a function', {});
+      }
+      this.globalMiddlewares.push(m);
     }
 
-    const channel = await this.ensureChannel();
-    const exchange = options.exchange ?? this.config.defaultExchange;
-    const routingKey = options.routingKey ?? eventName;
-    const persistent = options.persistent ?? this.config.persistent;
+    return this;
+  }
 
-    // Ensure exchange exists with correct type
-    const exchangeType = this.exchangeTypes.get(exchange) ?? this.config.exchangeType ?? 'topic';
-    await this.assertExchange(channel, exchange, exchangeType);
+  /**
+   * Publish an event to an exchange (or the configured default exchange).
+   *
+   * @param eventName - Routing key or event name to publish
+   * @param data - Payload for the event
+   * @param middlewaresOrOptions - Either an array of per-publish middlewares or a `PublishOptions` object
+   * @param options - Publish options when per-publish middlewares are provided in the third argument
+   * @returns Promise<void>
+   * @throws {ValidationError} When `eventName` is invalid or required args are missing
+   * @throws {HermesError} When the underlying publish to the broker fails
+   *
+   * Supported overloads:
+   * - `publish(eventName, data, options?)`
+   * - `publish(eventName, data, middlewares, options?)`
+   *
+   * Middleware composition order:
+   * 1. global middlewares registered with `publisher.use(...)`
+   * 2. per-publish middlewares passed as the third argument
+   * 3. internal publish handler which serializes and publishes to the broker
+   *
+   * Middleware signature: `(message, ctx, next) => Promise<any> | any`.
+   * The `MessageContext` provided to middlewares contains fields such as
+   * `messageId`, `timestamp`, `routingKey`, `eventName` and `headers`.
+   *
+   * Examples:
+   * ```ts
+   * // Simple publish
+   * await publisher.publish('user.created', { userId: '123', email: 'a@b.com' });
+   *```
+   *
+   * ```ts
+   * // Publish with per-publish middleware and options
+   * await publisher.publish(
+   *   'user.created',
+   *   { userId: '123' },
+   *   [
+   *     async (message, ctx, next) => {
+   *       // add tracing header
+   *       ctx.headers = { ...(ctx.headers || {}), 'x-trace-id': 'trace-1' };
+   *       return next();
+   *     },
+   *   ],
+   *   { persistent: true }
+   * );
+   *```
+   */
+  async publish<T = any>(eventName: string, data: T, options?: PublishOptions): Promise<void>;
 
-    const envelope = {
-      eventName,
-      data,
-      timestamp: Date.now(),
-      metadata: options.metadata,
+  async publish<T = any>(
+    eventName: string,
+    data: T,
+    middlewares: Middleware[],
+    options?: PublishOptions
+  ): Promise<void>;
+
+  async publish<T = any>(
+    eventName: string,
+    data: T,
+    middlewaresOrOptions?: Middleware[] | PublishOptions,
+    options?: PublishOptions
+  ): Promise<void> {
+    if (!eventName || typeof eventName !== 'string') {
+      throw new ValidationError('Event name must be a non-empty string', { eventName });
+    }
+
+    let requestMiddlewares: Middleware[] = [];
+    let publishOptions: PublishOptions = {};
+
+    if (Array.isArray(middlewaresOrOptions)) {
+      requestMiddlewares = middlewaresOrOptions;
+      publishOptions = options || {};
+    } else {
+      publishOptions = middlewaresOrOptions || {};
+    }
+
+    const publishHandler: Handler = async (message, context) => {
+      const channel = await this.ensureChannel();
+      const exchange = publishOptions.exchange ?? this.config.defaultExchange;
+      const persistent = publishOptions.persistent ?? this.config.persistent;
+      const routingKey = publishOptions.routingKey ?? eventName;
+
+      // Ensure exchange exists with correct type
+      const exchangeType = this.exchangeTypes.get(exchange) ?? this.config.exchangeType ?? 'topic';
+      await this.assertExchange(channel, exchange, exchangeType);
+
+      const envelope = {
+        eventName,
+        data: message,
+        timestamp: Date.now(),
+        metadata: publishOptions.metadata,
+      };
+
+      const payload = this.config.serializer.encode(envelope);
+
+      try {
+        const published = channel.publish(exchange, routingKey, payload, {
+          persistent,
+          contentType: 'application/json',
+          timestamp: envelope.timestamp,
+          messageId: context.messageId,
+          headers: context.headers,
+        });
+
+        // Wait for channel to drain if needed
+        if (!published) {
+          await new Promise<void>((resolve) => channel.once('drain', resolve));
+        }
+
+        // Wait for broker confirmation
+        await (channel as any).waitForConfirms();
+        this.config.logger.debug(`Published event "${routingKey}" to ${exchange}/${routingKey}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
+      }
     };
 
-    const payload = this.config.serializer.encode(envelope);
+    // Compone middleware globali + specifici + handler
+    const stack = [...this.globalMiddlewares, ...requestMiddlewares, publishHandler] as [
+      ...Middleware[],
+      Handler,
+    ];
+    const composed = compose(...stack);
 
-    try {
-      const published = channel.publish(exchange, routingKey, payload, {
-        persistent,
-        contentType: 'application/json',
-        timestamp: envelope.timestamp,
-      });
+    // Crea context
+    const context: MessageContext = {
+      messageId:
+        publishOptions.metadata?.messageId ||
+        `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: new Date(),
+      routingKey: publishOptions.routingKey ?? eventName,
+      eventName: eventName, // backward compatibility
+      headers: {},
+    };
 
-      // Wait for channel to drain if needed
-      if (!published) {
-        await new Promise<void>((resolve) => channel.once('drain', resolve));
-      }
-
-      // Wait for broker confirmation
-      await (channel as any).waitForConfirms();
-      this.config.logger.debug(`Published event "${eventName}" to ${exchange}/${routingKey}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
-    }
+    return composed(data, context);
   }
 
   /**
