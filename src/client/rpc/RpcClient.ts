@@ -49,6 +49,25 @@ const DEFAULT_CONFIG = {
 
 /**
  * RpcClient implements request/response pattern over RabbitMQ
+ *
+ * The RPC client allows you to send requests to a server and receive responses asynchronously.
+ * It handles connection management, request correlation, timeouts, and error handling automatically.
+ *
+ * @example
+ * ```typescript
+ * import { RpcClient } from 'hermes-mq';
+ *
+ * const client = new RpcClient({
+ *   connection: { url: 'amqp://localhost' },
+ *   queueName: 'my-service'
+ * });
+ *
+ * // Send a request
+ * const result = await client.send('CALCULATE', { a: 5, b: 3 });
+ * console.log(result); // { sum: 8 }
+ *
+ * await client.close();
+ * ```
  */
 export class RpcClient {
   private config: Required<Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>>;
@@ -61,6 +80,11 @@ export class RpcClient {
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
 
+  /**
+   * Create a new RPC client instance
+   *
+   * @param config - Client configuration including connection details and queue name
+   */
   constructor(config: RpcClientConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.connectionManager = ConnectionManager.getInstance(config.connection);
@@ -119,7 +143,39 @@ export class RpcClient {
   }
 
   /**
-   * Send RPC request
+   * Send an RPC request and wait for response
+   *
+   * @param command - The command name (case-insensitive)
+   * @param data - The request payload
+   * @param options - Additional options for the request
+   * @param options.timeout - Custom timeout for this request (overrides default)
+   * @param options.metadata - Additional metadata to send with the request
+   * @param options.signal - AbortSignal to cancel the request
+   * @returns Promise that resolves with the response data
+   * @throws {TimeoutError} When request times out
+   * @throws {ValidationError} When command is invalid
+   * @throws {Error} When client is not ready or connection fails
+   *
+   * @example
+   * ```typescript
+   * // Basic usage
+   * const result = await client.send('ADD', { a: 5, b: 3 });
+   *
+   * // With custom timeout
+   * const result = await client.send('PROCESS', data, { timeout: 5000 });
+   *
+   * // With metadata
+   * const result = await client.send('CREATE', data, {
+   *   metadata: { userId: '123', traceId: 'abc' }
+   * });
+   *
+   * // With abort signal
+   * const controller = new AbortController();
+   * setTimeout(() => controller.abort(), 1000);
+   * const result = await client.send('LONG_RUNNING', data, {
+   *   signal: controller.signal
+   * });
+   * ```
    */
   async send<TRequest = any, TResponse = any>(
     command: string,
@@ -247,14 +303,19 @@ export class RpcClient {
   }
 
   /**
-   * Check if client is ready
+   * Check if the client is ready to send requests
+   *
+   * @returns true if client is connected and initialized
    */
   isClientReady(): boolean {
     return this.isReady;
   }
 
   /**
-   * Close the RPC client
+   * Close the RPC client and cleanup resources
+   *
+   * Cancels all pending requests and closes the connection.
+   * After calling close(), the client cannot be reused.
    */
   async close(): Promise<void> {
     if (this.consumerTag && this.channel) {

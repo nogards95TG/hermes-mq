@@ -49,6 +49,24 @@ interface PublishOptions {
 
 /**
  * Publisher for Pub/Sub pattern over RabbitMQ
+ *
+ * The Publisher allows you to publish events to exchanges that can be consumed by multiple subscribers.
+ * It supports different exchange types (topic, fanout, direct) and handles connection management automatically.
+ *
+ * @example
+ * ```typescript
+ * import { Publisher } from 'hermes-mq';
+ *
+ * const publisher = new Publisher({
+ *   connection: { url: 'amqp://localhost' },
+ *   exchange: 'events'
+ * });
+ *
+ * // Publish an event
+ * await publisher.publish('user.created', { userId: '123', name: 'John' });
+ *
+ * await publisher.close();
+ * ```
  */
 export class Publisher {
   private connectionManager: ConnectionManager;
@@ -61,6 +79,12 @@ export class Publisher {
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
 
+  /**
+   * Create a new Publisher instance
+   *
+   * @param config - Publisher configuration including connection and exchange details
+   * @throws {ValidationError} When connection URL is missing
+   */
   constructor(config: PublisherConfig) {
     if (!config.connection?.url) {
       throw new ValidationError('Connection URL is required', {});
@@ -105,6 +129,32 @@ export class Publisher {
 
   /**
    * Publish an event to an exchange
+   *
+   * @param eventName - The event name (used as routing key by default)
+   * @param data - The event payload
+   * @param options - Publishing options
+   * @param options.exchange - Target exchange (uses default if not specified)
+   * @param options.routingKey - Custom routing key (uses eventName if not specified)
+   * @param options.persistent - Whether to persist the message (default: true)
+   * @param options.metadata - Additional metadata to include
+   * @throws {ValidationError} When eventName is invalid
+   * @throws {HermesError} When publishing fails
+   *
+   * @example
+   * ```typescript
+   * // Basic publish
+   * await publisher.publish('user.created', { userId: '123' });
+   *
+   * // With custom routing key
+   * await publisher.publish('order.placed', orderData, {
+   *   routingKey: 'orders.high-priority'
+   * });
+   *
+   * // To specific exchange
+   * await publisher.publish('notification', data, {
+   *   exchange: 'notifications'
+   * });
+   * ```
    */
   async publish<T = any>(eventName: string, data: T, options: PublishOptions = {}): Promise<void> {
     if (!eventName || typeof eventName !== 'string') {
@@ -152,6 +202,21 @@ export class Publisher {
 
   /**
    * Publish the same event to multiple exchanges
+   *
+   * @param exchanges - Array of exchange names to publish to
+   * @param eventName - The event name
+   * @param data - The event payload
+   * @param options - Publishing options (same as publish method)
+   * @throws {ValidationError} When exchanges array is invalid
+   *
+   * @example
+   * ```typescript
+   * await publisher.publishToMany(
+   *   ['events', 'audit', 'notifications'],
+   *   'user.deleted',
+   *   { userId: '123' }
+   * );
+   * ```
    */
   async publishToMany<T = any>(
     exchanges: string[],
@@ -170,6 +235,9 @@ export class Publisher {
 
   /**
    * Close publisher and cleanup resources
+   *
+   * Closes the channel and connection. After calling close(),
+   * the publisher cannot be reused.
    */
   async close(): Promise<void> {
     this.assertedExchanges.clear();

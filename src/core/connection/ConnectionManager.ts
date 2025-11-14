@@ -27,7 +27,25 @@ const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
 
 /**
  * ConnectionManager implements singleton pattern for RabbitMQ connections
- * Each unique URL gets its own ConnectionManager instance
+ *
+ * Manages RabbitMQ connections with automatic reconnection, connection pooling,
+ * and graceful error handling. Each unique URL gets its own ConnectionManager instance.
+ *
+ * @example
+ * ```typescript
+ * import { ConnectionManager } from 'hermes-mq/core';
+ *
+ * const manager = ConnectionManager.getInstance({
+ *   url: 'amqp://localhost',
+ *   reconnect: true,
+ *   heartbeat: 60
+ * });
+ *
+ * const connection = await manager.getConnection();
+ * // Use connection...
+ *
+ * await manager.close();
+ * ```
  */
 export class ConnectionManager extends EventEmitter {
   private static instances = new Map<string, ConnectionManager>();
@@ -47,6 +65,12 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Get or create ConnectionManager instance for given configuration
+   *
+   * Returns a singleton instance for each unique URL. Multiple calls with the same
+   * URL will return the same instance.
+   *
+   * @param config - Connection configuration
+   * @returns ConnectionManager instance
    */
   static getInstance(config: ConnectionConfig): ConnectionManager {
     const key = config.url;
@@ -60,6 +84,12 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Get active connection, establishing if necessary
+   *
+   * Returns the current connection or establishes a new one if needed.
+   * Waits for ongoing connection attempts to complete.
+   *
+   * @returns Promise that resolves to the RabbitMQ connection
+   * @throws {ConnectionError} When connection fails
    */
   async getConnection(): Promise<amqp.Connection> {
     if (this.isClosed) {
@@ -195,6 +225,8 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Check if currently connected
+   *
+   * @returns true if connection exists and is not in connecting state
    */
   isConnected(): boolean {
     return this.connection !== null && !this.isConnecting;
@@ -202,6 +234,9 @@ export class ConnectionManager extends EventEmitter {
 
   /**
    * Close connection and cleanup
+   *
+   * Closes the connection, cancels reconnection timers, and removes the instance
+   * from the singleton registry. After calling close(), the manager cannot be reused.
    */
   async close(): Promise<void> {
     this.isClosed = true;

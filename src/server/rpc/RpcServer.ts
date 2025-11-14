@@ -45,6 +45,29 @@ const DEFAULT_CONFIG = {
 
 /**
  * RpcServer handles incoming RPC requests and routes to registered handlers
+ *
+ * The RPC server listens for requests on a queue and routes them to appropriate handlers
+ * based on the command name. It supports multiple handlers, error handling, and graceful shutdown.
+ *
+ * @example
+ * ```typescript
+ * import { RpcServer } from 'hermes-mq';
+ *
+ * const server = new RpcServer({
+ *   connection: { url: 'amqp://localhost' },
+ *   queueName: 'calculator'
+ * });
+ *
+ * // Register handlers
+ * server.registerHandler('ADD', (data) => data.a + data.b);
+ * server.registerHandler('MULTIPLY', (data) => data.a * data.b);
+ *
+ * await server.start();
+ * console.log('Server running...');
+ *
+ * // Later...
+ * await server.stop();
+ * ```
  */
 export class RpcServer {
   private config: Required<Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer'>>;
@@ -57,6 +80,11 @@ export class RpcServer {
   private consumerTag: string | null = null;
   private inFlightMessages = new Set<string>();
 
+  /**
+   * Create a new RPC server instance
+   *
+   * @param config - Server configuration including connection and queue details
+   */
   constructor(config: RpcServerConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.connectionManager = ConnectionManager.getInstance(config.connection);
@@ -66,6 +94,22 @@ export class RpcServer {
 
   /**
    * Register a command handler
+   *
+   * @param command - The command name (case-insensitive)
+   * @param handler - Function that processes the request and returns a response
+   * @throws {ValidationError} When command or handler is invalid
+   *
+   * @example
+   * ```typescript
+   * server.registerHandler('CALCULATE', (data) => {
+   *   return { result: data.a + data.b };
+   * });
+   *
+   * server.registerHandler('GET_USER', async (data) => {
+   *   const user = await db.getUser(data.userId);
+   *   return user;
+   * });
+   * ```
    */
   registerHandler<TRequest = any, TResponse = any>(
     command: string,
@@ -105,6 +149,11 @@ export class RpcServer {
 
   /**
    * Start the RPC server
+   *
+   * Begins listening for requests on the configured queue.
+   * The server must be started before it can handle requests.
+   *
+   * @throws {Error} When connection fails or server is already running
    */
   async start(): Promise<void> {
     if (this.isRunning) {
@@ -264,6 +313,8 @@ export class RpcServer {
 
   /**
    * Check if server is running
+   *
+   * @returns true if server is actively listening for requests
    */
   isServerRunning(): boolean {
     return this.isRunning;
@@ -271,6 +322,8 @@ export class RpcServer {
 
   /**
    * Get number of registered handlers
+   *
+   * @returns Number of command handlers registered
    */
   getHandlerCount(): number {
     return this.handlers.size;
@@ -278,6 +331,9 @@ export class RpcServer {
 
   /**
    * Stop the RPC server
+   *
+   * Stops listening for new requests and waits for in-flight requests to complete.
+   * After calling stop(), the server cannot be restarted.
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {

@@ -66,6 +66,34 @@ interface HandlerRegistration<T = any> {
 
 /**
  * Subscriber for Pub/Sub pattern over RabbitMQ
+ *
+ * The Subscriber listens for events on an exchange and routes them to registered handlers
+ * based on routing patterns. Supports wildcards (* for one word, # for zero or more words).
+ *
+ * @example
+ * ```typescript
+ * import { Subscriber } from 'hermes-mq';
+ *
+ * const subscriber = new Subscriber({
+ *   connection: { url: 'amqp://localhost' },
+ *   exchange: 'events'
+ * });
+ *
+ * // Register handlers with patterns
+ * subscriber.on('user.created', (data) => {
+ *   console.log('User created:', data);
+ * });
+ *
+ * subscriber.on('order.*', (data, context) => {
+ *   console.log('Order event:', context.eventName, data);
+ * });
+ *
+ * await subscriber.start();
+ * console.log('Subscriber running...');
+ *
+ * // Later...
+ * await subscriber.stop();
+ * ```
  */
 export class Subscriber {
   private connectionManager: ConnectionManager;
@@ -82,6 +110,12 @@ export class Subscriber {
   private running = false;
   private generatedQueueName?: string;
 
+  /**
+   * Create a new Subscriber instance
+   *
+   * @param config - Subscriber configuration including connection and exchange details
+   * @throws {ValidationError} When connection URL or exchange is missing
+   */
   constructor(config: SubscriberConfig) {
     if (!config.connection?.url) {
       throw new ValidationError('Connection URL is required', {});
@@ -116,7 +150,25 @@ export class Subscriber {
 
   /**
    * Register an event handler for a routing pattern
+   *
    * Supports wildcards: * (one word), # (zero or more words)
+   *
+   * @param eventPattern - Routing pattern to match (supports * and # wildcards)
+   * @param handler - Function called when matching events are received
+   * @returns This subscriber instance for chaining
+   * @throws {ValidationError} When pattern or handler is invalid
+   *
+   * @example
+   * ```typescript
+   * // Exact match
+   * subscriber.on('user.created', handler);
+   *
+   * // Single word wildcard
+   * subscriber.on('order.*', handler); // matches 'order.placed', 'order.cancelled'
+   *
+   * // Multiple words wildcard
+   * subscriber.on('user.#', handler); // matches 'user.created', 'user.profile.updated'
+   * ```
    */
   on<T = any>(eventPattern: string, handler: EventHandler<T>): this {
     if (!eventPattern || typeof eventPattern !== 'string') {
@@ -142,6 +194,11 @@ export class Subscriber {
 
   /**
    * Start consuming events from the exchange
+   *
+   * Creates the exchange and queue, binds routing patterns, and begins consuming messages.
+   * At least one handler must be registered before calling start().
+   *
+   * @throws {ValidationError} When no handlers are registered
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -196,6 +253,9 @@ export class Subscriber {
 
   /**
    * Stop consuming and cleanup
+   *
+   * Stops consuming messages and closes the channel.
+   * After calling stop(), the subscriber cannot be restarted.
    */
   async stop(): Promise<void> {
     if (!this.running) {
@@ -226,6 +286,8 @@ export class Subscriber {
 
   /**
    * Check if subscriber is currently running
+   *
+   * @returns true if subscriber is actively consuming messages
    */
   isRunning(): boolean {
     return this.running;
