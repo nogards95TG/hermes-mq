@@ -1,59 +1,71 @@
 {
   "name": "hermes-mq",
   "version": "1.0.0",
-  "private": true,
-  "description": "Modern, type-safe RabbitMQ client library for Node.js",
+  "description": "Modern, type-safe RabbitMQ client library for Node.js with RPC and Pub/Sub support",
   "author": "nogards95TG",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nogards95TG/hermes-mq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nogards95TG/hermes-mq/issues"
+  },
+  "homepage": "https://github.com/nogards95TG/hermes-mq#readme",
   "keywords": [
     "rabbitmq",
     "amqp",
     "message-queue",
     "rpc",
     "pubsub",
+    "publisher",
+    "subscriber",
+    "microservices",
     "typescript"
   ],
-  "workspaces": [
-    "packages/*",
-    "examples/*"
+  "files": [
+    "dist",
+    "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "turbo run build",
-    "test": "turbo run test && pnpm test:integration",
-    "test:unit": "turbo run test:unit",
-    "test:integration": "vitest run --config packages/__tests__/integration/vitest.config.ts",
-    "test:integration:watch": "vitest watch --config packages/__tests__/integration/vitest.config.ts",
-    "test:watch": "turbo run test:watch",
-    "test:coverage": "turbo run test:coverage",
-    "lint": "turbo run lint",
-    "lint:fix": "turbo run lint:fix",
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo",
     "format": "prettier --write \"**/*.{ts,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md}\"",
-    "clean": "turbo run clean",
-    "typecheck": "turbo run typecheck",
     "pre-push": "bash scripts/pre-push.sh",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "turbo run build && changeset publish"
+    "publish:npm": "npm publish"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.1",
+    "@types/amqplib": "^0.10.5",
     "@types/node": "^20.11.5",
-    "@typescript-eslint/eslint-plugin": "^6.19.0",
-    "@typescript-eslint/parser": "^6.19.0",
     "@vitest/coverage-v8": "^1.2.1",
-    "eslint": "^8.56.0",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-prettier": "^5.1.3",
     "prettier": "^3.2.4",
     "testcontainers": "^11.8.1",
-    "turbo": "^1.11.3",
+    "tsup": "^8.0.1",
     "typescript": "^5.3.3",
     "vitest": "^1.6.1"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "pnpm": ">=8.0.0"
-  },
-  "packageManager": "pnpm@10.13.1"
+    "node": ">=18.0.0"
+  }
 }
