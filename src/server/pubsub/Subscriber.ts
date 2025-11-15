@@ -8,7 +8,28 @@ import {
   SilentLogger,
   ValidationError,
   type RetryConfig,
+  AckStrategy,
+  MessageValidationOptions,
 } from '../../core';
+import { MessageParser } from '../../core/message/MessageParser';
+
+/**
+ * Error handling configuration for subscribers
+ */
+export interface ErrorHandlingOptions {
+  isolateErrors: boolean;
+  errorHandler?: (error: Error, context: ErrorContext) => void;
+  continueOnError: boolean;
+}
+
+/**
+ * Error context information
+ */
+export interface ErrorContext {
+  eventName: string;
+  messageId?: string;
+  error: Error;
+}
 
 /**
  * Subscriber configuration
@@ -40,6 +61,10 @@ export interface SubscriberConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+  handlerTimeout?: number;
+  ackStrategy?: AckStrategy;
+  messageValidation?: MessageValidationOptions;
+  errorHandling?: ErrorHandlingOptions;
 }
 
 /**
@@ -109,6 +134,7 @@ export class Subscriber {
   private consumerTag?: string;
   private running = false;
   private generatedQueueName?: string;
+  private messageParser: MessageParser;
 
   /**
    * Create a new Subscriber instance
@@ -136,7 +162,18 @@ export class Subscriber {
       retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
-    };
+      handlerTimeout: config.handlerTimeout,
+      ackStrategy: config.ackStrategy ?? { mode: 'auto', requeue: true },
+      messageValidation: config.messageValidation ?? {
+        malformedMessageStrategy: 'dlq',
+      },
+      errorHandling: config.errorHandling ?? {
+        isolateErrors: false,
+        continueOnError: false,
+      },
+    } as any;
+
+    this.messageParser = new MessageParser(this.config.messageValidation);
 
     this.connectionManager = ConnectionManager.getInstance({
       url: this.config.connection.url,
@@ -333,7 +370,33 @@ export class Subscriber {
     }
 
     try {
-      const envelope = this.config.serializer.decode(msg.content);
+      // Parse and validate message
+      const parseResult = await this.messageParser.parse(msg);
+
+      if (!parseResult.success) {
+        this.config.logger.error('Received malformed message', parseResult.error, {
+          strategy: parseResult.strategy,
+          messageId: msg.properties.messageId,
+        });
+
+        switch (parseResult.strategy) {
+          case 'reject':
+            // NACK without requeue - sends to DLQ
+            await channel.nack(msg, false, false);
+            break;
+          case 'dlq':
+            // For now just NACK
+            await channel.nack(msg, false, false);
+            break;
+          case 'ignore':
+            // ACK and ignore
+            await channel.ack(msg);
+            break;
+        }
+        return;
+      }
+
+      const envelope = parseResult.data;
       const eventName = envelope.eventName || msg.fields.routingKey;
       const timestamp = envelope.timestamp || Date.now();
       const metadata = envelope.metadata;
@@ -350,26 +413,105 @@ export class Subscriber {
         return;
       }
 
-      // Execute all matching handlers in parallel
-      await Promise.all(
-        matchingHandlers.map(({ handler }) =>
-          handler(data, {
-            eventName,
-            timestamp,
-            metadata,
-            rawMessage: msg,
-          })
-        )
-      );
+      // Execute handlers based on error handling strategy
+      const context = {
+        eventName,
+        timestamp,
+        metadata,
+        rawMessage: msg,
+      };
 
-      await channel.ack(msg);
-      this.config.logger.debug(`Successfully processed event: ${eventName}`);
+      if (this.config.errorHandling?.isolateErrors) {
+        // Isolate errors - continue processing even if one fails
+        await this.executeHandlersIsolated(matchingHandlers, data, context, channel, msg);
+      } else {
+        // All-or-nothing - if any fails, NACK all
+        await this.executeHandlersStrict(matchingHandlers, data, context, channel, msg);
+      }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      this.config.logger.error(`Error handling message: ${errorMsg}`);
+      this.config.logger.error('Error handling message', error as Error);
       // Reject without requeue (dead letter if configured)
-      await channel.nack(msg, false, false);
+      if (channel) {
+        await channel.nack(msg, false, false);
+      }
     }
+  }
+
+  /**
+   * Execute handlers with error isolation (continue on error)
+   */
+  private async executeHandlersIsolated(
+    matchingHandlers: HandlerRegistration[],
+    data: any,
+    context: any,
+    channel: Channel,
+    msg: ConsumeMessage
+  ): Promise<void> {
+    const results = await Promise.allSettled(
+      matchingHandlers.map(({ handler }) => this.executeHandler(handler, data, context))
+    );
+
+    // Check for failures
+    const failures = results.filter((r) => r.status === 'rejected');
+
+    if (failures.length > 0) {
+      // Log failures but continue
+      failures.forEach((failure: any) => {
+        this.config.logger.error('Handler failed (isolated)', failure.reason as Error, {
+          eventName: context.eventName,
+          messageId: msg.properties.messageId,
+        });
+
+        // Call error handler if provided
+        if (this.config.errorHandling?.errorHandler) {
+          this.config.errorHandling.errorHandler(failure.reason as Error, {
+            eventName: context.eventName,
+            messageId: msg.properties.messageId,
+            error: failure.reason as Error,
+          });
+        }
+      });
+    }
+
+    // Always ACK in isolated mode
+    await channel.ack(msg);
+    this.config.logger.debug(`Processed event: ${context.eventName} (${results.length} handlers)`);
+  }
+
+  /**
+   * Execute handlers strictly (all-or-nothing)
+   */
+  private async executeHandlersStrict(
+    matchingHandlers: HandlerRegistration[],
+    data: any,
+    context: any,
+    channel: Channel,
+    msg: ConsumeMessage
+  ): Promise<void> {
+    // Execute all handlers
+    await Promise.all(
+      matchingHandlers.map(({ handler }) => this.executeHandler(handler, data, context))
+    );
+
+    // All succeeded
+    await channel.ack(msg);
+    this.config.logger.debug(`Successfully processed event: ${context.eventName}`);
+  }
+
+  /**
+   * Execute a single handler with timeout support
+   */
+  private async executeHandler(handler: EventHandler, data: any, context: any): Promise<any> {
+    if (this.config.handlerTimeout) {
+      return Promise.race([
+        handler(data, context),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Handler timeout')), this.config.handlerTimeout)
+        ),
+      ]);
+    }
+
+    return handler(data, context);
   }
 
   /**

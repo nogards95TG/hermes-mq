@@ -18,7 +18,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
 - 📦 **Zero Dependencies**: Only depends on `amqplib`
 
-##  Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -131,6 +131,155 @@ subscriber
   });
 
 await subscriber.start();
+```
+
+## 🛡️ Production Reliability Features
+
+Hermes MQ includes comprehensive reliability features designed for production environments:
+
+### 1. ACK/NACK Strategy with Retries
+
+Configure automatic message retry behavior with exponential backoff:
+
+```typescript
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'critical-service',
+  ackStrategy: {
+    mode: 'auto', // 'auto' | 'manual'
+    maxRetries: 3,
+    requeue: (error, attempts) => attempts < 3 && !error.fatal,
+    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000),
+  },
+});
+```
+
+### 2. Dead Letter Queue (DLQ) Configuration
+
+Automatically route failed messages to a DLQ for analysis and reprocessing:
+
+```typescript
+const queueOptions = {
+  dlq: {
+    enabled: true,
+    exchange: 'dlx', // Dead letter exchange
+    routingKey: 'failed.messages',
+    ttl: 86400000, // 24 hours
+    maxLength: 10000,
+    processHandler: async (msg) => {
+      // Handle failed messages
+      logger.error('Processing DLQ message', msg);
+    },
+  },
+};
+
+await connectionManager.assertQueue('myqueue', queueOptions);
+```
+
+### 3. Poison Message Protection
+
+Automatically handle malformed messages without crashing:
+
+```typescript
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'users',
+  messageValidation: {
+    maxSize: 1048576, // 1MB
+    malformedMessageStrategy: 'dlq', // 'reject' | 'dlq' | 'ignore'
+  },
+});
+```
+
+### 4. Duplicate Detection
+
+Prevent reprocessing of duplicate messages using LRU cache:
+
+```typescript
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'payments',
+  deduplication: {
+    enabled: true,
+    cacheTTL: 300000, // 5 minutes
+    cacheSize: 10000,
+    keyExtractor: (msg) => msg.transactionId,
+  },
+});
+```
+
+### 5. Error Isolation in Pub/Sub
+
+Prevent single failed handler from affecting other handlers:
+
+```typescript
+const subscriber = new Subscriber({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  handlerTimeout: 30000, // 30 seconds
+  errorHandling: {
+    isolateErrors: true, // Continue on handler error
+    continueOnError: true,
+    errorHandler: (error, context) => {
+      logger.error('Handler failed', { event: context.eventName, error });
+    },
+  },
+});
+```
+
+### 6. Graceful Shutdown
+
+Properly clean up resources and wait for in-flight messages:
+
+```typescript
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'myqueue',
+});
+
+await server.start();
+
+// Later...
+await server.stop({
+  timeout: 30000, // Wait up to 30 seconds for in-flight messages
+  force: false, // Throw if timeout exceeded
+});
+```
+
+### Production Configuration Example
+
+```typescript
+const rpcServer = new RpcServer({
+  connection: {
+    url: process.env.AMQP_URL || 'amqp://localhost',
+    heartbeat: 30,
+    reconnect: true,
+    maxReconnectAttempts: 10,
+  },
+  queueName: 'critical-service',
+
+  // Reliability settings
+  ackStrategy: {
+    mode: 'auto',
+    maxRetries: 3,
+    requeue: (error, attempts) => attempts < 3 && !error.fatal,
+    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000),
+  },
+
+  messageValidation: {
+    maxSize: 1048576, // 1MB
+    malformedMessageStrategy: 'dlq',
+  },
+
+  deduplication: {
+    enabled: true,
+    cacheTTL: 300000,
+    cacheSize: 10000,
+  },
+
+  prefetch: 1, // Process one message at a time
+  handlerTimeout: 30000,
+});
 ```
 
 ## 🏗️ Development

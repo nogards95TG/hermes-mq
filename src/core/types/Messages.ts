@@ -51,3 +51,44 @@ export class JsonSerializer implements Serializer {
     return JSON.parse(buffer.toString());
   }
 }
+
+/**
+ * ACK/NACK strategy for reliable message handling
+ */
+export interface AckStrategy {
+  mode: 'auto' | 'manual';
+  requeue: boolean | ((error: Error, attempts: number) => boolean);
+  maxRetries?: number;
+  retryDelay?: number | ((attempt: number) => number);
+}
+
+/**
+ * Dead Letter Queue configuration
+ */
+export interface DLQOptions {
+  enabled: boolean;
+  exchange?: string;
+  routingKey?: string;
+  ttl?: number;
+  maxLength?: number;
+  processHandler?: (msg: any) => Promise<void>;
+}
+
+/**
+ * Message validation configuration
+ */
+export interface MessageValidationOptions {
+  maxSize?: number;
+  schemaValidation?: boolean;
+  malformedMessageStrategy: 'reject' | 'dlq' | 'ignore';
+}
+
+/**
+ * Deduplication configuration
+ */
+export interface DeduplicationOptions {
+  enabled: boolean;
+  cacheTTL: number;
+  cacheSize: number;
+  keyExtractor?: (msg: any) => string;
+}

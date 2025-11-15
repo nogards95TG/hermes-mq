@@ -16,7 +16,9 @@ if (typeof global.File === 'undefined') {
 
 // Polyfill FormData for Node < 18
 if (typeof global.FormData === 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { FormData } = require('formdata-node');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   global.FormData = FormData;
 }
 

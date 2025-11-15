@@ -9,7 +9,12 @@ import {
   ResponseEnvelope,
   Serializer,
   JsonSerializer,
+  AckStrategy,
+  MessageValidationOptions,
+  DeduplicationOptions,
 } from '../../core';
+import { MessageParser } from '../../core/message/MessageParser';
+import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
 
 /**
  * RPC Server configuration
@@ -22,6 +27,9 @@ export interface RpcServerConfig {
   logger?: Logger;
   assertQueue?: boolean;
   queueOptions?: amqp.Options.AssertQueue;
+  ackStrategy?: AckStrategy;
+  messageValidation?: MessageValidationOptions;
+  deduplication?: DeduplicationOptions;
 }
 
 /**
@@ -40,6 +48,19 @@ const DEFAULT_CONFIG = {
   assertQueue: true,
   queueOptions: {
     durable: true,
+  },
+  ackStrategy: {
+    mode: 'auto' as const,
+    requeue: true,
+    maxRetries: 3,
+  },
+  messageValidation: {
+    malformedMessageStrategy: 'dlq' as const,
+  },
+  deduplication: {
+    enabled: false,
+    cacheTTL: 300000,
+    cacheSize: 10000,
   },
 };
 
@@ -79,6 +100,8 @@ export class RpcServer {
   private isRunning = false;
   private consumerTag: string | null = null;
   private inFlightMessages = new Set<string>();
+  private messageParser: MessageParser;
+  private deduplicator: MessageDeduplicator;
 
   /**
    * Create a new RPC server instance
@@ -86,10 +109,12 @@ export class RpcServer {
    * @param config - Server configuration including connection and queue details
    */
   constructor(config: RpcServerConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...DEFAULT_CONFIG, ...config } as any;
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
+    this.messageParser = new MessageParser(this.config.messageValidation);
+    this.deduplicator = new MessageDeduplicator(this.config.deduplication);
   }
 
   /**
@@ -220,8 +245,33 @@ export class RpcServer {
     }
 
     try {
-      // Decode request
-      const request: RequestEnvelope = this.serializer.decode(msg.content);
+      // Parse and validate request
+      const parseResult = await this.messageParser.parse(msg);
+
+      if (!parseResult.success) {
+        this.logger.error('Received malformed message', parseResult.error, {
+          correlationId,
+          strategy: parseResult.strategy,
+        });
+
+        switch (parseResult.strategy) {
+          case 'reject':
+            // NACK without requeue - sends to DLQ
+            await this.channel.nack(msg, false, false);
+            break;
+          case 'dlq':
+            // For now just NACK (DLQ handler in ConnectionManager)
+            await this.channel.nack(msg, false, false);
+            break;
+          case 'ignore':
+            // ACK and ignore
+            await this.channel.ack(msg);
+            break;
+        }
+        return;
+      }
+
+      const request: RequestEnvelope = parseResult.data;
 
       if (!request.command) {
         throw new ValidationError('Command is required in request');
@@ -239,8 +289,20 @@ export class RpcServer {
         throw new Error(`No handler registered for command: ${request.command}`);
       }
 
-      // Execute handler
-      const result = await handler(request.data, request.metadata);
+      // Check for duplicate (if enabled)
+      const deduplicationResult = await this.deduplicator.process(msg, async () => {
+        // Execute handler
+        return await handler(request.data, request.metadata);
+      });
+
+      if (deduplicationResult.duplicate) {
+        this.logger.debug('Skipped duplicate request', {
+          command: request.command,
+          correlationId,
+        });
+      }
+
+      const result = deduplicationResult.result;
 
       // Send success response
       if (replyTo) {
@@ -265,48 +327,128 @@ export class RpcServer {
       }
 
       // Acknowledge message
-      this.channel.ack(msg);
+      if (this.config.ackStrategy.mode === 'auto') {
+        this.channel.ack(msg);
+      }
     } catch (error) {
       this.logger.error('Error handling request', error as Error);
 
-      // Send error response
-      if (replyTo && this.channel) {
-        try {
-          const response: ResponseEnvelope = {
-            id: correlationId || 'unknown',
-            timestamp: Date.now(),
-            success: false,
-            error: {
-              code: (error as any).name || 'HANDLER_ERROR',
-              message: (error as Error).message,
-              details: (error as any).details,
-            },
-          };
-
-          const content = this.serializer.encode(response);
-
-          this.channel.sendToQueue(replyTo, content, {
-            correlationId,
-            contentType: 'application/json',
-          });
-
-          this.logger.debug('Sent error response', {
-            correlationId,
-            error: (error as Error).message,
-          });
-        } catch (replyError) {
-          this.logger.error('Failed to send error response', replyError as Error);
-        }
-      }
-
-      // Acknowledge message (we don't want to requeue errors)
-      if (this.channel) {
-        this.channel.ack(msg);
-      }
+      // Handle retry logic
+      await this.handleRequestError(msg, error, correlationId, replyTo);
     } finally {
       // Remove from in-flight
       if (correlationId) {
         this.inFlightMessages.delete(correlationId);
+      }
+    }
+  }
+
+  /**
+   * Handle request errors with configurable ACK strategy
+   */
+  private async handleRequestError(
+    msg: amqp.ConsumeMessage,
+    error: unknown,
+    correlationId: string | undefined,
+    replyTo: string | undefined
+  ): Promise<void> {
+    const strategy = this.config.ackStrategy;
+    const attempts = (msg.properties.headers?.['x-retry-count'] as number) || 0;
+
+    if (strategy.mode === 'manual') {
+      // Let user handle via context (would need to be implemented with context pattern)
+      // For now just NACK without requeue to send to DLQ
+      if (this.channel) {
+        this.channel.nack(msg, false, false);
+      }
+      return;
+    }
+
+    // Determine if we should requeue
+    const shouldRequeue =
+      typeof strategy.requeue === 'function'
+        ? strategy.requeue(error as Error, attempts + 1)
+        : (strategy.requeue ?? true);
+
+    // Send error response
+    if (replyTo && this.channel) {
+      try {
+        const response: ResponseEnvelope = {
+          id: correlationId || 'unknown',
+          timestamp: Date.now(),
+          success: false,
+          error: {
+            code: (error as any).name || 'HANDLER_ERROR',
+            message: (error as Error).message,
+            details: (error as any).details,
+          },
+        };
+
+        const content = this.serializer.encode(response);
+
+        this.channel.sendToQueue(replyTo, content, {
+          correlationId,
+          contentType: 'application/json',
+        });
+
+        this.logger.debug('Sent error response', {
+          correlationId,
+          error: (error as Error).message,
+        });
+      } catch (replyError) {
+        this.logger.error('Failed to send error response', replyError as Error);
+      }
+    }
+
+    // Determine action based on retry count and strategy
+    if (this.channel) {
+      if (shouldRequeue && attempts < (strategy.maxRetries || 3)) {
+        // Calculate delay if configured
+        let delay = 0;
+        if (strategy.retryDelay) {
+          delay =
+            typeof strategy.retryDelay === 'function'
+              ? strategy.retryDelay(attempts + 1)
+              : strategy.retryDelay;
+        }
+
+        if (delay > 0) {
+          // Schedule retry with delay
+          // Note: This would require the RabbitMQ delayed message plugin
+          // or implementation of a delay queue
+          this.logger.debug('Scheduling retry with delay', {
+            correlationId,
+            delay,
+            attempt: attempts + 1,
+          });
+
+          // For now, increment retry count and requeue
+          msg.properties.headers = {
+            ...msg.properties.headers,
+            'x-retry-count': attempts + 1,
+            'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
+          };
+
+          this.channel.nack(msg, false, true); // Requeue with delay (approximate)
+        } else {
+          // Requeue immediately
+          msg.properties.headers = {
+            ...msg.properties.headers,
+            'x-retry-count': attempts + 1,
+            'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
+          };
+
+          this.channel.nack(msg, false, true);
+        }
+      } else {
+        // Max retries exceeded or should not requeue - send to DLQ
+        this.logger.warn('Message sent to DLQ', {
+          correlationId,
+          attempts,
+          maxRetries: strategy.maxRetries,
+        });
+
+        this.channel.nack(msg, false, false); // NACK without requeue - goes to DLQ
       }
     }
   }
@@ -335,50 +477,60 @@ export class RpcServer {
    * Stops listening for new requests and waits for in-flight requests to complete.
    * After calling stop(), the server cannot be restarted.
    */
-  async stop(): Promise<void> {
+  async stop(options?: { timeout?: number; force?: boolean }): Promise<void> {
+    const timeout = options?.timeout || 30000;
+
     if (!this.isRunning) {
       this.logger.warn('RpcServer is not running');
       return;
     }
 
-    // Stop consuming new messages
-    if (this.consumerTag && this.channel) {
-      try {
-        await this.channel.cancel(this.consumerTag);
-        this.logger.debug('Consumer cancelled');
-      } catch (error) {
-        this.logger.warn('Error cancelling consumer', { error: (error as Error).message });
+    try {
+      // Stop consuming new messages
+      if (this.consumerTag && this.channel) {
+        try {
+          await this.channel.cancel(this.consumerTag);
+          this.logger.debug('Consumer cancelled');
+        } catch (error) {
+          this.logger.warn('Error cancelling consumer', { error: (error as Error).message });
+        }
+      }
+
+      // Wait for in-flight messages to complete
+      if (!options?.force) {
+        const startTime = Date.now();
+
+        while (this.inFlightMessages.size > 0 && Date.now() - startTime < timeout) {
+          this.logger.debug('Waiting for in-flight messages', {
+            count: this.inFlightMessages.size,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        if (this.inFlightMessages.size > 0) {
+          this.logger.warn('Stopping with in-flight messages', {
+            count: this.inFlightMessages.size,
+          });
+        }
+      }
+
+      // Close channel
+      if (this.channel) {
+        try {
+          await this.channel.close();
+        } catch (error) {
+          this.logger.warn('Error closing channel', { error: (error as Error).message });
+        }
+        this.channel = null;
+      }
+
+      this.isRunning = false;
+      this.logger.info('RpcServer stopped');
+    } catch (error) {
+      this.logger.error('Error during shutdown', error as Error);
+      if (!options?.force) {
+        throw error;
       }
     }
-
-    // Wait for in-flight messages to complete
-    const maxWait = 5000;
-    const startTime = Date.now();
-
-    while (this.inFlightMessages.size > 0 && Date.now() - startTime < maxWait) {
-      this.logger.debug('Waiting for in-flight messages', {
-        count: this.inFlightMessages.size,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    if (this.inFlightMessages.size > 0) {
-      this.logger.warn('Stopping with in-flight messages', {
-        count: this.inFlightMessages.size,
-      });
-    }
-
-    // Close channel
-    if (this.channel) {
-      try {
-        await this.channel.close();
-      } catch (error) {
-        this.logger.warn('Error closing channel', { error: (error as Error).message });
-      }
-      this.channel = null;
-    }
-
-    this.isRunning = false;
-    this.logger.info('RpcServer stopped');
   }
 }

@@ -20,6 +20,7 @@ vi.mock('../../src/core', async () => {
       return true;
     }),
     ack: vi.fn(),
+    nack: vi.fn(),
     cancel: vi.fn().mockResolvedValue({}),
     close: vi.fn().mockResolvedValue({}),
     on: vi.fn(),
@@ -243,7 +244,8 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      expect(channel.ack).toHaveBeenCalledWith(message);
+      // With new ACK strategy, errors on first attempt result in NACK with requeue=true
+      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
       expect(reply.success).toBe(false);
@@ -269,7 +271,8 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      expect(channel.ack).toHaveBeenCalledWith(message);
+      // With new ACK strategy, errors on first attempt result in NACK with requeue=true
+      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
       expect(reply.success).toBe(false);

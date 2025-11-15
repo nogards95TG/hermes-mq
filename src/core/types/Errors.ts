@@ -48,3 +48,21 @@ export class ValidationError extends HermesError {
     super(message, 'VALIDATION_ERROR', details);
   }
 }
+
+/**
+ * Message validation errors (poison message handling)
+ */
+export class MessageValidationError extends HermesError {
+  constructor(message: string, details?: any) {
+    super(message, 'MESSAGE_VALIDATION_ERROR', details);
+  }
+}
+
+/**
+ * Message parsing errors
+ */
+export class MessageParsingError extends HermesError {
+  constructor(message: string, details?: any) {
+    super(message, 'MESSAGE_PARSING_ERROR', details);
+  }
+}

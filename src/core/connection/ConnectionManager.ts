@@ -2,6 +2,7 @@ import * as amqp from 'amqplib';
 import { EventEmitter } from 'events';
 import { Logger, SilentLogger } from '../types/Logger';
 import { ConnectionError } from '../types/Errors';
+import type { DLQOptions } from '../types/Messages';
 
 /**
  * Connection configuration options
@@ -13,6 +14,17 @@ export interface ConnectionConfig {
   maxReconnectAttempts?: number;
   heartbeat?: number;
   logger?: Logger;
+}
+
+/**
+ * Queue assertion options with DLQ support
+ */
+export interface QueueAssertionOptions {
+  durable?: boolean;
+  exclusive?: boolean;
+  autoDelete?: boolean;
+  arguments?: Record<string, any>;
+  dlq?: DLQOptions;
 }
 
 /**
@@ -274,5 +286,94 @@ export class ConnectionManager extends EventEmitter {
     } catch {
       return url.replace(/\/\/[^:]+:[^@]+@/, '//****:****@');
     }
+  }
+
+  /**
+   * Assert a queue with optional DLQ configuration
+   *
+   * Creates a queue with optional dead-letter exchange configuration for
+   * handling messages that fail processing.
+   *
+   * @param queueName - Name of the queue to assert
+   * @param options - Queue assertion options including DLQ config
+   * @throws {ConnectionError} When assertion fails
+   */
+  async assertQueue(
+    queueName: string,
+    options?: QueueAssertionOptions
+  ): Promise<amqp.Replies.AssertQueue> {
+    const connection = await this.getConnection();
+    const channel = (await (connection as any).createChannel()) as amqp.Channel;
+
+    try {
+      const queueArgs: Record<string, any> = options?.arguments ?? {};
+
+      // Configure DLQ if enabled
+      if (options?.dlq?.enabled) {
+        const dlqExchange = options.dlq.exchange || 'dlx';
+        const dlqRoutingKey = options.dlq.routingKey || `${queueName}.dead`;
+
+        // Assert DLQ exchange
+        await channel.assertExchange(dlqExchange, 'direct', { durable: true });
+
+        // Assert DLQ queue
+        const dlqName = `${queueName}.dlq`;
+        await channel.assertQueue(dlqName, {
+          durable: true,
+          arguments: {
+            'x-message-ttl': options.dlq.ttl,
+            'x-max-length': options.dlq.maxLength,
+          },
+        });
+
+        // Bind DLQ
+        await channel.bindQueue(dlqName, dlqExchange, dlqRoutingKey);
+
+        // Set dead letter arguments on main queue
+        queueArgs['x-dead-letter-exchange'] = dlqExchange;
+        queueArgs['x-dead-letter-routing-key'] = dlqRoutingKey;
+
+        // Setup DLQ processor if provided
+        if (options.dlq.processHandler) {
+          await this.consumeDLQ(channel, dlqName, options.dlq.processHandler);
+        }
+      }
+
+      // Assert main queue
+      const result = await channel.assertQueue(queueName, {
+        durable: options?.durable ?? true,
+        exclusive: options?.exclusive ?? false,
+        autoDelete: options?.autoDelete ?? false,
+        arguments: queueArgs,
+      });
+
+      return result;
+    } finally {
+      await channel.close();
+    }
+  }
+
+  /**
+   * Consume messages from DLQ
+   */
+  private async consumeDLQ(
+    channel: amqp.Channel,
+    queueName: string,
+    handler: (msg: any) => Promise<void>
+  ): Promise<void> {
+    await channel.consume(queueName, async (msg) => {
+      if (!msg) return;
+
+      try {
+        const content = JSON.parse(msg.content.toString());
+        await handler(content);
+        await channel.ack(msg);
+      } catch (error) {
+        this.logger.error('DLQ processing failed', error as Error, {
+          queue: queueName,
+        });
+        await channel.nack(msg, false, false);
+      }
+    });
   }
 }
