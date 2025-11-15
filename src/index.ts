@@ -1,17 +1,4 @@
 /**
- * Hermes MQ - Modern RabbitMQ Client for Node.js
- *
- * A production-ready RabbitMQ client library with RPC and Pub/Sub patterns.
- * Features connection pooling, automatic reconnection, request timeouts, and TypeScript support.
- *
- * @packageDocumentation
- */
-
-// ============================================================================
-// CORE - Connection Management, Retry Logic, Types, Errors
-// ============================================================================
-
-/**
  * Core utilities for connection management and error handling
  */
 export {
@@ -39,19 +26,18 @@ export type {
   Logger,
 } from './core';
 
-// ============================================================================
-// CLIENT - RPC Client & Publisher
-// ============================================================================
+/**
+ * Middleware system for processing messages through pipelines
+ */
+export type { MessageContext, Middleware, Handler } from './core';
+export { compose } from './core';
+export { isHandler, isMiddleware } from './core';
 
 /**
  * Client components for making RPC calls and publishing events
  */
 export { RpcClient, Publisher } from './client';
 export type { RpcClientConfig, PublisherConfig } from './client';
-
-// ============================================================================
-// SERVER - RPC Server & Subscriber
-// ============================================================================
 
 /**
  * Server components for handling RPC requests and subscribing to events

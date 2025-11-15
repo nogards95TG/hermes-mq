@@ -92,6 +92,8 @@ export class RpcClient {
     this.serializer = config.serializer || new JsonSerializer();
   }
 
+  // Client-side middleware not implemented to preserve simpler client API.
+
   /**
    * Initialize the RPC client
    */
@@ -145,7 +147,7 @@ export class RpcClient {
   /**
    * Send an RPC request and wait for response
    *
-   * @param command - The command name (case-insensitive)
+   * @param command - The command name
    * @param data - The request payload
    * @param options - Additional options for the request
    * @param options.timeout - Custom timeout for this request (overrides default)
@@ -197,71 +199,86 @@ export class RpcClient {
     }
 
     const correlationId = randomUUID();
-    const timeout = options?.timeout || this.config.timeout;
+    let requestOptions: {
+      timeout?: number;
+      metadata?: Record<string, any>;
+      signal?: AbortSignal;
+    } = {};
 
-    // Create request envelope
-    const request: RequestEnvelope<TRequest> = {
-      id: correlationId,
-      command: command.toUpperCase(),
-      timestamp: Date.now(),
-      data,
-      metadata: options?.metadata,
+    requestOptions = options || {};
+
+    const timeout = requestOptions.timeout || this.config.timeout;
+
+    // Final handler that performs the actual sending
+    const sendHandler = async (message: TRequest) => {
+      // Create request envelope
+      const request: RequestEnvelope<TRequest> = {
+        id: correlationId,
+        command: command.toUpperCase(),
+        timestamp: Date.now(),
+        data: message,
+        metadata: requestOptions.metadata,
+      };
+
+      return new Promise<TResponse>((resolve, reject) => {
+        // Setup timeout
+        const timeoutHandle = setTimeout(() => {
+          this.pendingRequests.delete(correlationId);
+          reject(
+            new TimeoutError(`RPC request timeout after ${timeout}ms`, {
+              command,
+              timeout,
+              correlationId,
+            })
+          );
+        }, timeout);
+
+        // Track pending request
+        this.pendingRequests.set(correlationId, {
+          resolve,
+          reject,
+          timeout: timeoutHandle,
+        });
+
+        // Handle AbortSignal
+        if (requestOptions.signal) {
+          requestOptions.signal.addEventListener('abort', () => {
+            const pending = this.pendingRequests.get(correlationId);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              this.pendingRequests.delete(correlationId);
+              reject(new Error('Request aborted'));
+            }
+          });
+        }
+
+        try {
+          // Send request
+          const content = this.serializer.encode(request);
+
+          this.channel!.sendToQueue(this.config.queueName, content, {
+            correlationId,
+            replyTo: this.replyQueue!,
+            persistent: false,
+            contentType: 'application/json',
+            headers: requestOptions.metadata || {},
+          });
+
+          this.logger.debug('RPC request sent', {
+            command,
+            correlationId,
+            queueName: this.config.queueName,
+          });
+        } catch (error) {
+          clearTimeout(timeoutHandle);
+          this.pendingRequests.delete(correlationId);
+          reject(error);
+        }
+      });
     };
 
-    return new Promise<TResponse>((resolve, reject) => {
-      // Setup timeout
-      const timeoutHandle = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(
-          new TimeoutError(`RPC request timeout after ${timeout}ms`, {
-            command,
-            timeout,
-            correlationId,
-          })
-        );
-      }, timeout);
-
-      // Track pending request
-      this.pendingRequests.set(correlationId, {
-        resolve,
-        reject,
-        timeout: timeoutHandle,
-      });
-
-      // Handle AbortSignal
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          const pending = this.pendingRequests.get(correlationId);
-          if (pending) {
-            clearTimeout(pending.timeout);
-            this.pendingRequests.delete(correlationId);
-            reject(new Error('Request aborted'));
-          }
-        });
-      }
-
-      try {
-        // Send request
-        const content = this.serializer.encode(request);
-
-        this.channel!.sendToQueue(this.config.queueName, content, {
-          correlationId,
-          replyTo: this.replyQueue!,
-          persistent: false,
-          contentType: 'application/json',
-        });
-
-        this.logger.debug('RPC request sent', {
-          command,
-          correlationId,
-          queueName: this.config.queueName,
-        });
-      } catch (error) {
-        clearTimeout(timeoutHandle);
-        this.pendingRequests.delete(correlationId);
-        reject(error);
-      }
-    });
+    // Directly invoke send handler (no client-side middleware)
+    return sendHandler(data);
   }
 
   /**

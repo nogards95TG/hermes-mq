@@ -32,9 +32,10 @@ pnpm pre-push
 ```
 
 This runs:
+
 - 📦 Dependency installation
 - 🏗️ Build
--  Type checking
+- Type checking
 - 🧪 Unit tests
 - 🔗 Integration tests
 
@@ -85,7 +86,6 @@ All code is written in TypeScript with strict mode enabled.
 2. We may ask for changes before merging
 3. Ensure CI/CD passes
 4. Keep PRs focused and small when possible
-
 
 ## License
 

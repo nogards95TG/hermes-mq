@@ -18,7 +18,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
 - 📦 **Zero Dependencies**: Only depends on `amqplib`
 
-##  Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -132,6 +132,46 @@ subscriber
 
 await subscriber.start();
 ```
+
+## 🧩 Middleware (Express-style)
+
+Hermes MQ supports an Express-style middleware model on the server side only — that is, for `RpcServer` and `Subscriber`.
+
+Server-side middleware are small functions that run in an "onion" order (before/after) and can modify the message context, short-circuit the pipeline, or perform side effects like logging, metrics, or auth checks.
+
+Key concepts (server-side):
+
+- Global middleware: registered with `.use(...middlewares)` on `Subscriber` or `RpcServer`. They apply to all incoming messages for that instance.
+- Per-handler middleware: passed when registering a handler. Example:
+  - `subscriber.on('event.name', mw1, mw2, handler)`
+  - `server.registerHandler('METHOD', mw1, handler)`
+
+Middleware signature (TypeScript):
+
+```ts
+type Middleware<T = any> = (
+  message: T,
+  ctx: MessageContext,
+  next: () => Promise<any>
+) => Promise<any> | any;
+```
+
+Handler (final function) signature for RPC server handlers remains backward-compatible: `(data, metadata) => Promise|any`. The library wraps legacy handlers so you can keep existing code.
+
+Behavior notes and compatibility guarantees (server-side):
+
+- `.use(...)` performs defensive validation and will throw a `ValidationError` if a non-function is passed. This is intentional to fail fast when middleware arguments are invalid.
+- When no middleware is attached to a `Subscriber.on(...)` or `RpcServer.registerHandler(...)`, the original (legacy) handler is stored directly to preserve semantics and test spyability.
+- Middleware order: global middlewares run first, then per-handler middlewares, then the final handler. Middlewares form an "onion" so you can run logic before and after the downstream call using `await next()`.
+
+Client-side usage (Publisher / RpcClient)
+
+Middleware are intentionally not supported on the client/dispatcher side (i.e. `Publisher` and `RpcClient`) to keep the sending API simple and predictable. Instead prefer these patterns:
+
+- Use `options.metadata` when calling `publish` or `send` to pass headers and tracing information that will be sent to the broker.
+- Compose or wrap client calls outside the library if you need cross-cutting behavior (timing, retries, sampling). Example helper wrappers are provided in the `examples/` folder.
+
+See the `examples/` folder for usage examples that show server-side middleware and recommended client-side patterns.
 
 ## 🏗️ Development
 

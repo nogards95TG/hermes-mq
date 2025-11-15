@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { beforeAll, afterAll } from 'vitest';
 

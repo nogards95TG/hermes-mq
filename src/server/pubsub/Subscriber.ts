@@ -9,6 +9,14 @@ import {
   ValidationError,
   type RetryConfig,
 } from '../../core';
+import {
+  compose,
+  type MessageContext,
+  type Middleware,
+  type Handler as CoreHandler,
+} from '../../core';
+import { isTransientError } from '../../core';
+import { getXDeathCount } from '../../core';
 
 /**
  * Subscriber configuration
@@ -40,6 +48,10 @@ export interface SubscriberConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+  errorHandling?: {
+    requeueTransientErrors?: boolean;
+    maxRetries?: number;
+  };
 }
 
 /**
@@ -57,10 +69,11 @@ export type EventHandler<T = any> = (
 
 /**
  * Internal handler registration
+ * Stores the composed core handler so MessageContext can be created once at runtime.
  */
 interface HandlerRegistration<T = any> {
   pattern: string;
-  handler: EventHandler<T>;
+  composedHandler: CoreHandler<T>;
   regex: RegExp;
 }
 
@@ -106,9 +119,29 @@ export class Subscriber {
     exchangeOptions?: SubscriberConfig['exchangeOptions'];
   };
   private handlers: HandlerRegistration[] = [];
+  // Global middlewares applied to every registered handler (in registration order)
+  private globalMiddlewares: Middleware[] = [];
   private consumerTag?: string;
   private running = false;
   private generatedQueueName?: string;
+
+  /**
+   * Add one or more global middleware that will be executed for every handler
+   *
+   * @example
+   * server.use(middleware1)
+   * server.use(middleware1, middleware2, middleware3)
+   */
+  use(...mws: Middleware[]): this {
+    for (const m of mws) {
+      if (typeof m !== 'function') {
+        throw new ValidationError('Middleware must be a function', {});
+      }
+      this.globalMiddlewares.push(m);
+    }
+
+    return this;
+  }
 
   /**
    * Create a new Subscriber instance
@@ -136,6 +169,7 @@ export class Subscriber {
       retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
+      errorHandling: config.errorHandling ?? { requeueTransientErrors: true, maxRetries: 3 },
     };
 
     this.connectionManager = ConnectionManager.getInstance({
@@ -170,24 +204,58 @@ export class Subscriber {
    * subscriber.on('user.#', handler); // matches 'user.created', 'user.profile.updated'
    * ```
    */
-  on<T = any>(eventPattern: string, handler: EventHandler<T>): this {
+  on<T = any>(eventPattern: string, handler: EventHandler<T>): this;
+  on<T = any>(
+    eventPattern: string,
+    ...middlewaresAndHandler: [...Middleware[], EventHandler<T>]
+  ): this;
+  on(eventPattern: string, ...args: any[]): this {
     if (!eventPattern || typeof eventPattern !== 'string') {
       throw new ValidationError('Event pattern must be a non-empty string', {});
     }
 
-    if (typeof handler !== 'function') {
+    if (args.length === 0) {
+      throw new ValidationError('Handler is required', {});
+    }
+
+    const last = args[args.length - 1];
+    if (typeof last !== 'function') {
       throw new ValidationError('Handler must be a function', {});
     }
 
+    const userHandler: EventHandler = last as EventHandler;
+    const perHandlerMiddlewares: Middleware[] = args.slice(0, -1) as Middleware[];
+
     const regex = this.patternToRegex(eventPattern);
 
-    this.handlers.push({
-      pattern: eventPattern,
-      handler: handler as EventHandler,
-      regex,
-    });
+    // Compose the adapter with any global or per-handler middleware. Even when there
+    // are no user middlewares, the adapter will be composed and stored as the
+    // composedHandler so runtime always receives a CoreHandler.
 
-    this.config.logger.debug(`Registered handler for pattern: ${eventPattern}`);
+    // Adapter: create a core Handler that calls the legacy EventHandler signature
+    const adapter: CoreHandler = (message: any, ctx: MessageContext) => {
+      const legacyCtx = {
+        eventName: ctx.eventName ?? ctx.routingKey ?? '',
+        timestamp: ctx.timestamp instanceof Date ? ctx.timestamp.getTime() : Date.now(),
+        metadata: (ctx as any).metadata,
+        rawMessage: (ctx as any).rawMessage,
+      };
+
+      return userHandler(message, legacyCtx as any);
+    };
+
+    const fullStack: [...Middleware[], CoreHandler] = [
+      ...(this.globalMiddlewares as Middleware[]),
+      ...(perHandlerMiddlewares as Middleware[]),
+      adapter as CoreHandler,
+    ];
+
+    const composed = compose(...(fullStack as any));
+
+    // Store composed handler directly; handleMessage will create MessageContext once
+    this.handlers.push({ pattern: eventPattern, composedHandler: composed as CoreHandler, regex });
+
+    this.config.logger.debug(`Registered handler with middleware for pattern: ${eventPattern}`);
 
     return this;
   }
@@ -332,9 +400,10 @@ export class Subscriber {
       return;
     }
 
+  let eventName = msg.fields?.routingKey || 'unknown';
     try {
       const envelope = this.config.serializer.decode(msg.content);
-      const eventName = envelope.eventName || msg.fields.routingKey;
+      eventName = envelope.eventName || msg.fields.routingKey;
       const timestamp = envelope.timestamp || Date.now();
       const metadata = envelope.metadata;
       const data = envelope.data;
@@ -350,25 +419,69 @@ export class Subscriber {
         return;
       }
 
-      // Execute all matching handlers in parallel
+      // Create MessageContext ONCE and pass to composed handlers
+      const context: MessageContext = {
+        messageId: msg.properties?.messageId || randomUUID(),
+        timestamp: new Date(timestamp),
+        eventName,
+        routingKey: msg.fields?.routingKey,
+        headers: msg.properties?.headers || {},
+        metadata,
+        rawMessage: msg,
+        ack: async () => {
+          if (channel && msg) await channel.ack(msg);
+        },
+        nack: async (requeue = false) => {
+          if (channel && msg) await channel.nack(msg, false, requeue);
+        },
+      } as MessageContext;
+
+      // Execute all composed handlers in parallel
       await Promise.all(
-        matchingHandlers.map(({ handler }) =>
-          handler(data, {
-            eventName,
-            timestamp,
-            metadata,
-            rawMessage: msg,
-          })
-        )
+        matchingHandlers.map(({ composedHandler }) => composedHandler(data, context))
       );
 
       await channel.ack(msg);
       this.config.logger.debug(`Successfully processed event: ${eventName}`);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      this.config.logger.error(`Error handling message: ${errorMsg}`);
-      // Reject without requeue (dead letter if configured)
-      await channel.nack(msg, false, false);
+      const err = error as Error;
+      this.config.logger.error(`Error handling message: ${err?.message ?? 'Unknown error'}`);
+
+      try {
+        const headers = msg.properties?.headers as Record<string, any> | undefined;
+        const attempts = getXDeathCount(headers, { queue: this.generatedQueueName || this.config.queueName });
+        const maxRetries = this.config.errorHandling?.maxRetries ?? 3;
+
+        if (attempts >= maxRetries) {
+          this.config.logger.warn('Max retry attempts exceeded, sending to DLQ', {
+            eventName,
+            attempts,
+            maxRetries,
+          });
+          await channel.nack(msg, false, false);
+          return;
+        }
+
+        const transient = isTransientError(err);
+        if (transient) {
+          const requeue = this.config.errorHandling?.requeueTransientErrors ?? true;
+          this.config.logger.warn('Transient error, requeuing message', {
+            eventName,
+            requeue,
+            error: err.message,
+            attempts,
+          });
+          await channel.nack(msg, false, requeue);
+        } else {
+          this.config.logger.error('Permanent error, sending to DLQ (nack without requeue)', err, {
+            eventName,
+            attempts,
+          });
+          await channel.nack(msg, false, false);
+        }
+      } catch (ackErr) {
+        this.config.logger.error('Failed to apply ack/nack for error handling', ackErr as Error);
+      }
     }
   }
 
