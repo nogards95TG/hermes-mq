@@ -92,7 +92,7 @@ export class RpcClient {
     this.serializer = config.serializer || new JsonSerializer();
   }
 
-  // Client-side middleware intentionally removed to preserve simpler client API.
+  // Client-side middleware not implemented to preserve simpler client API.
 
   /**
    * Initialize the RPC client
@@ -149,7 +149,6 @@ export class RpcClient {
    *
    * @param command - The command name
    * @param data - The request payload
-   * @param middlewaresOrOptions - Either an array of per-publish middlewares or a `PublishOptions` object
    * @param options - Additional options for the request
    * @param options.timeout - Custom timeout for this request (overrides default)
    * @param options.metadata - Additional metadata to send with the request
@@ -210,7 +209,7 @@ export class RpcClient {
 
     const timeout = requestOptions.timeout || this.config.timeout;
 
-    // Handler finale che fa l'invio effettivo
+    // Final handler that performs the actual sending
     const sendHandler = async (message: TRequest) => {
       // Create request envelope
       const request: RequestEnvelope<TRequest> = {

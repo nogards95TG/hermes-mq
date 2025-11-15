@@ -400,7 +400,7 @@ export class Subscriber {
       return;
     }
 
-  let eventName = '';
+  let eventName = msg.fields?.routingKey || 'unknown';
     try {
       const envelope = this.config.serializer.decode(msg.content);
       eventName = envelope.eventName || msg.fields.routingKey;
@@ -449,7 +449,7 @@ export class Subscriber {
 
       try {
         const headers = msg.properties?.headers as Record<string, any> | undefined;
-        const attempts = getXDeathCount(headers);
+        const attempts = getXDeathCount(headers, { queue: this.generatedQueueName || this.config.queueName });
         const maxRetries = this.config.errorHandling?.maxRetries ?? 3;
 
         if (attempts >= maxRetries) {

@@ -353,7 +353,7 @@ export class RpcServer {
       }
 
       // Acknowledge message if not already done
-      if (this.channel && !responseSent) {
+      if (this.channel) {
         this.channel.ack(msg);
       }
     } catch (error) {
@@ -393,7 +393,7 @@ export class RpcServer {
       try {
         const err = error as Error;
         const headers = msg.properties?.headers as Record<string, any> | undefined;
-        const attempts = getXDeathCount(headers);
+        const attempts = getXDeathCount(headers, { queue: this.config.queueName });
         const maxRetries = this.config.errorHandling?.maxRetries ?? 3;
 
         if (attempts >= maxRetries) {

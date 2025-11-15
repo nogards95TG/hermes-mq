@@ -13,7 +13,7 @@
   in CI. Keep it under `__tests__/integration` and run separately.
 */
 
-import { test, expect } from 'vitest';
+import { test } from 'vitest';
 import { GenericContainer } from 'testcontainers';
 import amqp from 'amqplib';
 

@@ -37,7 +37,7 @@ const startClient = async () => {
     timeout: 5000,
   });
 
-  // Client-side middleware is not supported
+  // Client-side middleware is not supported - use options.metadata for headers/tracing if you need to pass extra information.
   const res = await client.send('ECHO', { hello: 'world' });
   console.log('Client received response:', res);
 };

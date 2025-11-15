@@ -79,8 +79,6 @@ export class Publisher {
   };
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
-  
-
   /**
    * Create a new Publisher instance
    *
