@@ -9,7 +9,7 @@ import {
   HermesError,
   type RetryConfig,
 } from '../../core';
-import { Middleware, Handler, MessageContext, compose } from '../../core/middleware';
+import { MessageContext } from '../../core/middleware';
 
 /**
  * Publisher configuration
@@ -79,7 +79,7 @@ export class Publisher {
   };
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
-  private globalMiddlewares: Middleware[] = [];
+  
 
   /**
    * Create a new Publisher instance
@@ -129,23 +129,7 @@ export class Publisher {
     }
   }
 
-  /**
-   * Add one or more global middleware that will be executed for every publish
-   *
-   * @example
-   * publisher.use(middleware1)
-   * publisher.use(middleware1, middleware2, middleware3)
-   */
-  use(...middlewares: Middleware[]): this {
-    for (const m of middlewares) {
-      if (typeof m !== 'function') {
-        throw new ValidationError('Middleware must be a function', {});
-      }
-      this.globalMiddlewares.push(m);
-    }
-
-    return this;
-  }
+  // Client-side middleware removed: Publisher exposes a simple publish API.
 
   /**
    * Publish an event to an exchange (or the configured default exchange).
@@ -193,36 +177,14 @@ export class Publisher {
    * );
    *```
    */
-  async publish<T = any>(eventName: string, data: T, options?: PublishOptions): Promise<void>;
-
-  async publish<T = any>(
-    eventName: string,
-    data: T,
-    middlewares: Middleware[],
-    options?: PublishOptions
-  ): Promise<void>;
-
-  async publish<T = any>(
-    eventName: string,
-    data: T,
-    middlewaresOrOptions?: Middleware[] | PublishOptions,
-    options?: PublishOptions
-  ): Promise<void> {
+  async publish<T = any>(eventName: string, data: T, options?: PublishOptions): Promise<void> {
     if (!eventName || typeof eventName !== 'string') {
       throw new ValidationError('Event name must be a non-empty string', { eventName });
     }
 
-    let requestMiddlewares: Middleware[] = [];
-    let publishOptions: PublishOptions = {};
+    const publishOptions: PublishOptions = options || {};
 
-    if (Array.isArray(middlewaresOrOptions)) {
-      requestMiddlewares = middlewaresOrOptions;
-      publishOptions = options || {};
-    } else {
-      publishOptions = middlewaresOrOptions || {};
-    }
-
-    const publishHandler: Handler = async (message, context) => {
+  const publishHandler = async (message: T, context: MessageContext) => {
       const channel = await this.ensureChannel();
       const exchange = publishOptions.exchange ?? this.config.defaultExchange;
       const persistent = publishOptions.persistent ?? this.config.persistent;
@@ -264,14 +226,7 @@ export class Publisher {
       }
     };
 
-    // Compone middleware globali + specifici + handler
-    const stack = [...this.globalMiddlewares, ...requestMiddlewares, publishHandler] as [
-      ...Middleware[],
-      Handler,
-    ];
-    const composed = compose(...stack);
-
-    // Crea context
+  // Create context (keeps backward compatibility fields)
     const context: MessageContext = {
       messageId:
         publishOptions.metadata?.messageId ||
@@ -279,10 +234,11 @@ export class Publisher {
       timestamp: new Date(),
       routingKey: publishOptions.routingKey ?? eventName,
       eventName: eventName, // backward compatibility
-      headers: {},
+      headers: publishOptions.metadata || {},
     };
 
-    return composed(data, context);
+    // Directly call internal publish handler (no client-side middleware)
+    return publishHandler(data, context);
   }
 
   /**

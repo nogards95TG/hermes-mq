@@ -12,7 +12,6 @@ import {
   Serializer,
   JsonSerializer,
 } from '../../core';
-import { Middleware, Handler, MessageContext, compose } from '../../core/middleware';
 
 /**
  * RPC Client configuration
@@ -80,7 +79,6 @@ export class RpcClient {
   private isReady = false;
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
-  private globalMiddlewares: Middleware[] = [];
 
   /**
    * Create a new RPC client instance
@@ -94,23 +92,7 @@ export class RpcClient {
     this.serializer = config.serializer || new JsonSerializer();
   }
 
-  /**
-   * Add one or more global middleware that will be executed for every request
-   *
-   * @example
-   * client.use(middleware1)
-   * client.use(middleware1, middleware2, middleware3)
-   */
-  use(...middlewares: Middleware[]): this {
-    for (const m of middlewares) {
-      if (typeof m !== 'function') {
-        throw new ValidationError('Middleware must be a function', {});
-      }
-      this.globalMiddlewares.push(m);
-    }
-
-    return this;
-  }
+  // Client-side middleware intentionally removed to preserve simpler client API.
 
   /**
    * Initialize the RPC client
@@ -206,34 +188,6 @@ export class RpcClient {
       metadata?: Record<string, any>;
       signal?: AbortSignal;
     }
-  ): Promise<TResponse>;
-
-  async send<TRequest = any, TResponse = any>(
-    command: string,
-    data: TRequest,
-    middlewares: Middleware[],
-    options?: {
-      timeout?: number;
-      metadata?: Record<string, any>;
-      signal?: AbortSignal;
-    }
-  ): Promise<TResponse>;
-
-  async send<TRequest = any, TResponse = any>(
-    command: string,
-    data: TRequest,
-    middlewaresOrOptions?:
-      | Middleware[]
-      | {
-          timeout?: number;
-          metadata?: Record<string, any>;
-          signal?: AbortSignal;
-        },
-    options?: {
-      timeout?: number;
-      metadata?: Record<string, any>;
-      signal?: AbortSignal;
-    }
   ): Promise<TResponse> {
     if (!command) {
       throw new ValidationError('Command is required');
@@ -246,24 +200,18 @@ export class RpcClient {
     }
 
     const correlationId = randomUUID();
-    let requestMiddlewares: Middleware[] = [];
     let requestOptions: {
       timeout?: number;
       metadata?: Record<string, any>;
       signal?: AbortSignal;
     } = {};
 
-    if (Array.isArray(middlewaresOrOptions)) {
-      requestMiddlewares = middlewaresOrOptions;
-      requestOptions = options || {};
-    } else {
-      requestOptions = middlewaresOrOptions || {};
-    }
+    requestOptions = options || {};
 
     const timeout = requestOptions.timeout || this.config.timeout;
 
     // Handler finale che fa l'invio effettivo
-    const sendHandler: Handler = async (message, context) => {
+    const sendHandler = async (message: TRequest) => {
       // Create request envelope
       const request: RequestEnvelope<TRequest> = {
         id: correlationId,
@@ -314,7 +262,7 @@ export class RpcClient {
             replyTo: this.replyQueue!,
             persistent: false,
             contentType: 'application/json',
-            headers: context.headers,
+            headers: requestOptions.metadata || {},
           });
 
           this.logger.debug('RPC request sent', {
@@ -330,22 +278,8 @@ export class RpcClient {
       });
     };
 
-    // Compone middleware globali + specifici + handler
-    const stack = [...this.globalMiddlewares, ...requestMiddlewares, sendHandler] as [
-      ...Middleware[],
-      Handler,
-    ];
-    const composed = compose(...stack);
-
-    // Crea context
-    const context: MessageContext = {
-      messageId: correlationId,
-      timestamp: new Date(),
-      method: command,
-      headers: {},
-    };
-
-    return composed(data, context);
+    // Directly invoke send handler (no client-side middleware)
+    return sendHandler(data);
   }
 
   /**

@@ -37,29 +37,8 @@ const startClient = async () => {
     timeout: 5000,
   });
 
-  // Example: global client middleware to time RPC requests
-  client.use(async (message, ctx, next) => {
-    const start = Date.now();
-    try {
-      const res = await next();
-      console.log('[RpcClient][global mw] response time', Date.now() - start, 'ms');
-      return res;
-    } catch (err) {
-      console.log('[RpcClient][global mw] request error after', Date.now() - start, 'ms');
-      throw err;
-    }
-  });
-
-  // per-request middleware
-  const requestMiddlewares = [
-    async (message, ctx, next) => {
-      ctx.headers = { ...(ctx.headers || {}), 'x-client': 'example' };
-      console.log('[RpcClient][per-request mw] set header');
-      return next();
-    },
-  ];
-
-  const res = await client.send('ECHO', { hello: 'world' }, { middlewares: requestMiddlewares });
+  // Client-side middleware is not supported
+  const res = await client.send('ECHO', { hello: 'world' });
   console.log('Client received response:', res);
 };
 
