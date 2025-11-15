@@ -9,6 +9,8 @@ import {
   ResponseEnvelope,
   Serializer,
   JsonSerializer,
+  isTransientError,
+  getXDeathCount,
   Middleware,
   Handler,
   isHandler,
@@ -27,6 +29,10 @@ export interface RpcServerConfig {
   logger?: Logger;
   assertQueue?: boolean;
   queueOptions?: amqp.Options.AssertQueue;
+  errorHandling?: {
+    requeueTransientErrors?: boolean;
+    maxRetries?: number;
+  };
 }
 
 /**
@@ -45,6 +51,10 @@ const DEFAULT_CONFIG = {
   assertQueue: true,
   queueOptions: {
     durable: true,
+  },
+  errorHandling: {
+    requeueTransientErrors: true,
+    maxRetries: 3,
   },
 };
 
@@ -379,9 +389,49 @@ export class RpcServer {
         }
       }
 
-      // Acknowledge message (we don't want to requeue errors)
-      if (this.channel) {
-        this.channel.ack(msg);
+      // Classify error and decide ACK/NACK behavior including maxRetries via x-death header
+      try {
+        const err = error as Error;
+        const headers = msg.properties?.headers as Record<string, any> | undefined;
+        const attempts = getXDeathCount(headers);
+        const maxRetries = this.config.errorHandling?.maxRetries ?? 3;
+
+        if (attempts >= maxRetries) {
+          // Exceeded attempts: treat as permanent and remove (DLQ)
+          this.logger.warn('Max retry attempts exceeded, removing message (DLQ)', {
+            correlationId,
+            attempts,
+            maxRetries,
+          });
+          this.channel.ack(msg);
+          return;
+        }
+
+        const transient = isTransientError(err);
+
+        if (transient && this.channel) {
+          const requeue = this.config.errorHandling?.requeueTransientErrors ?? true;
+          this.logger.warn('Transient error handling: requeueing message', {
+            correlationId,
+            requeue,
+            error: err.message,
+            attempts,
+          });
+          this.channel.nack(msg, false, requeue);
+        } else if (this.channel) {
+          // Permanent error: ack to remove from queue (avoid infinite retry)
+          this.logger.error(
+            'Permanent error handling: removing message',
+            err,
+            {
+              correlationId,
+              attempts,
+            }
+          );
+          this.channel.ack(msg);
+        }
+      } catch (ackError) {
+        this.logger.error('Failed to apply ack/nack for error handling', ackError as Error);
       }
     } finally {
       // Remove from in-flight
