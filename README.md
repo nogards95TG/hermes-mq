@@ -208,25 +208,6 @@ const server = new RpcServer({
 });
 ```
 
-### 5. Error Isolation in Pub/Sub
-
-Prevent single failed handler from affecting other handlers:
-
-```typescript
-const subscriber = new Subscriber({
-  connection: { url: 'amqp://localhost' },
-  exchange: 'events',
-  handlerTimeout: 30000, // 30 seconds
-  errorHandling: {
-    isolateErrors: true, // Continue on handler error
-    continueOnError: true,
-    errorHandler: (error, context) => {
-      logger.error('Handler failed', { event: context.eventName, error });
-    },
-  },
-});
-```
-
 ### 6. Graceful Shutdown
 
 Properly clean up resources and wait for in-flight messages:
@@ -245,6 +226,191 @@ await server.stop({
   force: false, // Throw if timeout exceeded
 });
 ```
+
+## 🔧 Middleware System
+
+Hermes MQ includes an Express/Koa-like middleware system for request/response processing.
+
+### Server-Side Middleware
+
+**Global Middleware** - Applied to all handlers:
+
+```typescript
+import { RpcServer } from 'hermes-mq';
+
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'api',
+});
+
+// Register global middleware (must be before any handlers)
+server.use(async (ctx, next) => {
+  console.log(`[${ctx.command}] Request received`);
+  await next();
+  console.log(`[${ctx.command}] Response sent`);
+});
+
+// Global middlewares are applied to all handlers
+server.registerHandler('GET_USER', async (userId: string) => {
+  return await db.users.findById(userId);
+});
+```
+
+**Handler-Specific Middleware** - Applied only to specific handlers:
+
+```typescript
+import { validate, retry } from 'hermes-mq';
+import { z } from 'zod';
+
+const createUserSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+  age: z.number().int().positive(),
+});
+
+server.registerHandler(
+  'CREATE_USER',
+  validate(createUserSchema),  // Built-in validation middleware
+  retry({                        // Built-in retry middleware
+    maxAttempts: 3,
+    backoffStrategy: 'exponential',
+    backoffDelay: 1000
+  }),
+  async (payload) => {           // Handler receives validated payload
+    return await db.users.create(payload);
+  }
+);
+```
+
+### Built-in Middleware
+
+#### 1. Validate Middleware
+
+Validates incoming payloads with support for Zod, Yup, Ajv, and custom adapters:
+
+```typescript
+import { validate } from 'hermes-mq';
+
+// Auto-detect Zod schema
+const zodSchema = z.object({ id: z.number() });
+server.registerHandler('GET', validate(zodSchema), handler);
+
+// Auto-detect Yup schema
+const yupSchema = yup.object({ id: yup.number().required() });
+server.registerHandler('GET', validate(yupSchema), handler);
+
+// Custom adapter
+import { validateAdapter } from 'hermes-mq';
+
+const customAdapter = validateAdapter('joi', (payload) => {
+  const { error, value } = joiSchema.validate(payload);
+  if (error) return { success: false, errors: error.details };
+  return { success: true, value };
+});
+
+server.registerHandler('GET', validate(customAdapter), handler);
+```
+
+On validation failure, middleware returns:
+```typescript
+{
+  error: 'ValidationError',
+  details: [...] // validation error details
+}
+```
+
+#### 2. Retry Middleware
+
+Override per-command retry policy:
+
+```typescript
+import { retry } from 'hermes-mq';
+
+server.registerHandler(
+  'CRITICAL_OPERATION',
+  retry({
+    maxAttempts: 5,
+    backoffStrategy: 'exponential', // 'fixed' | 'exponential' | custom function
+    backoffDelay: 1000,
+    requeueOnFail: true
+  }),
+  handler
+);
+```
+
+### Custom Middleware
+
+Create custom middleware following the middleware signature:
+
+```typescript
+import { Middleware, RpcContext } from 'hermes-mq';
+
+const authMiddleware: Middleware = async (ctx: RpcContext, next) => {
+  // Pre-processing
+  const token = ctx.properties.headers?.authorization;
+  if (!token) {
+    return { error: 'Unauthorized' }; // Short-circuit with error
+  }
+
+  // Verify token and store user in context
+  const user = await verifyToken(token);
+  ctx.meta.user = user;
+
+  // Call next middleware/handler
+  const result = await next();
+
+  // Post-processing
+  console.log(`User ${user.id} executed ${ctx.command}`);
+  return result;
+};
+
+server.use(authMiddleware);
+server.registerHandler('DELETE_USER', async (payload, ctx) => {
+  const userId = ctx.meta.user.id;
+  return await db.users.delete(userId);
+});
+```
+
+### Client-Side Middleware
+
+Validate outgoing payloads before sending:
+
+```typescript
+import { RpcClient, validate } from 'hermes-mq';
+
+const client = new RpcClient({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'api',
+});
+
+// Register client middleware (runs before sending request)
+client.use(validate(createUserSchema));
+
+// Invalid payload will throw error before sending
+try {
+  await client.send('CREATE_USER', { name: 'John' }); // Missing required fields
+} catch (error) {
+  console.error('Validation failed:', error.message);
+}
+```
+
+### Middleware Execution Order
+
+```
+Global Middleware 1 → Global Middleware 2 → Handler Middleware 1 → Handler → Middleware 2 response → Middleware 1 response
+```
+
+### Important Notes
+
+1. **Global middleware registration**: Call `server.use()` **before** `registerHandler()` for middlewares to apply to all handlers. After the first handler is registered, additional `use()` calls will be ignored (logged with warning).
+
+2. **Handler signature**: New middleware system supports both:
+   - New: `(payload, ctx: RpcContext) => any`
+   - Old: `(payload, metadata?) => any` (backward compatible)
+
+3. **Short-circuiting**: Returning a non-undefined value from middleware stops chain execution and sends that value as response.
+
+4. **Error handling**: Throwing an error in middleware will be caught and sent to client as error response.
 
 ### Production Configuration Example
 
