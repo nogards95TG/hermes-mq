@@ -371,29 +371,6 @@ server.registerHandler('DELETE_USER', async (payload, ctx) => {
 });
 ```
 
-### Client-Side Middleware
-
-Validate outgoing payloads before sending:
-
-```typescript
-import { RpcClient, validate } from 'hermes-mq';
-
-const client = new RpcClient({
-  connection: { url: 'amqp://localhost' },
-  queueName: 'api',
-});
-
-// Register client middleware (runs before sending request)
-client.use(validate(createUserSchema));
-
-// Invalid payload will throw error before sending
-try {
-  await client.send('CREATE_USER', { name: 'John' }); // Missing required fields
-} catch (error) {
-  console.error('Validation failed:', error.message);
-}
-```
-
 ### Middleware Execution Order
 
 ```

@@ -25,12 +25,12 @@ const addSchema = {
     }
     return {
       success: false,
-      error: { errors: ['a and b must be numbers'] }
+      error: { errors: ['a and b must be numbers'] },
     };
-  }
+  },
 };
 
-async function main() {
+const main = async () => {
   const server = new RpcServer({
     connection: { url: 'amqp://localhost' },
     queueName: 'calculator',
@@ -41,9 +41,9 @@ async function main() {
   server.use(async (ctx, next) => {
     const startTime = Date.now();
     console.log(`[REQUEST] Command: ${ctx.command}, Payload:`, ctx.payload);
-    
+
     await next();
-    
+
     const duration = Date.now() - startTime;
     console.log(`[RESPONSE] Command: ${ctx.command}, Duration: ${duration}ms`);
   });
@@ -51,7 +51,7 @@ async function main() {
   // Handler with validation middleware
   server.registerHandler(
     'ADD',
-    validate(addSchema),  // Validates payload before handler
+    validate(addSchema), // Validates payload before handler
     async (payload, ctx) => {
       console.log(`[ADD] Calculating ${payload.a} + ${payload.b}`);
       return { sum: payload.a + payload.b };
@@ -65,7 +65,7 @@ async function main() {
     retry({
       maxAttempts: 3,
       backoffStrategy: 'exponential',
-      backoffDelay: 1000
+      backoffDelay: 1000,
     }),
     async (payload, ctx) => {
       console.log(`[MULTIPLY] Calculating ${payload.a} * ${payload.b}`);
@@ -74,36 +74,29 @@ async function main() {
   );
 
   // Handler that uses context metadata from middleware
-  server.registerHandler(
-    'DIVIDE',
-    validate(addSchema),
-    async (payload, ctx) => {
-      if (payload.b === 0) {
-        // Can short-circuit and return error
-        return {
-          error: 'DivisionByZero',
-          message: 'Cannot divide by zero'
-        };
-      }
-      console.log(`[DIVIDE] Calculating ${payload.a} / ${payload.b}`);
-      return { quotient: payload.a / payload.b };
+  server.registerHandler('DIVIDE', validate(addSchema), async (payload, ctx) => {
+    if (payload.b === 0) {
+      // Can short-circuit and return error
+      return {
+        error: 'DivisionByZero',
+        message: 'Cannot divide by zero',
+      };
     }
-  );
+    console.log(`[DIVIDE] Calculating ${payload.a} / ${payload.b}`);
+    return { quotient: payload.a / payload.b };
+  });
 
   // Simple handler without middleware (backward compatible)
-  server.registerHandler(
-    'ECHO',
-    async (payload) => {
-      console.log(`[ECHO] Echoing:`, payload);
-      return payload;
-    }
-  );
+  server.registerHandler('ECHO', async (payload) => {
+    console.log(`[ECHO] Echoing:`, payload);
+    return payload;
+  });
 
   try {
     console.log('Starting RPC server...');
     await server.start();
     console.log('Server listening on queue: calculator');
-    
+
     // Keep server running
     console.log('Press Ctrl+C to stop');
     await new Promise(() => {});
@@ -112,6 +105,6 @@ async function main() {
     await server.stop();
     process.exit(1);
   }
-}
+};
 
 main().catch(console.error);

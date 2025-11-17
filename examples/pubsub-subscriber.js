@@ -4,10 +4,10 @@ const { Subscriber } = require('../dist');
 const main = async () => {
   const subscriber = new Subscriber({
     connection: { url: 'amqp://localhost' },
-    exchange: 'events'
+    exchange: 'events',
   });
 
-  subscriber.on('user.created', data => {
+  subscriber.on('user.created', (data) => {
     console.log('User created event received:', data);
   });
 

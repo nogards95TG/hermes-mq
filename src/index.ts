@@ -73,7 +73,7 @@ export type {
  * Client components for making RPC calls and publishing events
  */
 export { RpcClient, Publisher } from './client';
-export type { RpcClientConfig, PublisherConfig, ClientMiddleware } from './client';
+export type { RpcClientConfig, PublisherConfig } from './client';
 
 // ============================================================================
 // SERVER - RPC Server & Subscriber

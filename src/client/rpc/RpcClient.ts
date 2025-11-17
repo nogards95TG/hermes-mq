@@ -27,14 +27,6 @@ export interface RpcClientConfig {
 }
 
 /**
- * Client middleware for outgoing payload validation/transformation
- */
-export type ClientMiddleware = (
-  command: string,
-  payload: any
-) => Promise<{ command: string; payload: any }> | { command: string; payload: any };
-
-/**
  * Pending request tracker
  */
 interface PendingRequest<T> {
@@ -83,7 +75,6 @@ export class RpcClient {
   private channel: amqp.ConfirmChannel | null = null;
   private logger: Logger;
   private serializer: Serializer;
-  private clientMiddlewares: ClientMiddleware[] = [];
   private pendingRequests = new Map<string, PendingRequest<any>>();
   private isReady = false;
   private replyQueue: string | null = null;
@@ -152,32 +143,6 @@ export class RpcClient {
   }
 
   /**
-   * Register client middleware for outgoing payload validation/transformation
-   *
-   * Client middleware is applied before sending requests to allow for:
-   * - Payload validation
-   * - Payload transformation
-   * - Request logging
-   *
-   * @param middlewares - Client middleware functions
-   *
-   * @example
-   * ```typescript
-   * import { validate } from 'hermes-mq';
-   * import { z } from 'zod';
-   *
-   * const addSchema = z.object({ a: z.number(), b: z.number() });
-   * client.use(validate(addSchema));
-   * ```
-   */
-  use(...middlewares: ClientMiddleware[]): void {
-    this.clientMiddlewares.push(...middlewares);
-    this.logger.debug(`Registered ${middlewares.length} client middlewares`, {
-      totalClientMiddlewares: this.clientMiddlewares.length,
-    });
-  }
-
-  /**
    * Send an RPC request and wait for response
    *
    * @param command - The command name (case-insensitive)
@@ -231,30 +196,15 @@ export class RpcClient {
       throw new Error('RpcClient is not ready');
     }
 
-    // Apply client middlewares
-    let payload = data;
-    let commandToSend = command;
-
-    for (const middleware of this.clientMiddlewares) {
-      try {
-        const result = await middleware(commandToSend, payload);
-        commandToSend = result.command;
-        payload = result.payload;
-      } catch (error) {
-        this.logger.error('Client middleware error', error as Error);
-        throw error;
-      }
-    }
-
     const correlationId = randomUUID();
     const timeout = options?.timeout || this.config.timeout;
 
     // Create request envelope
     const request: RequestEnvelope<TRequest> = {
       id: correlationId,
-      command: commandToSend.toUpperCase(),
+      command: command.toUpperCase(),
       timestamp: Date.now(),
-      data: payload,
+      data,
       metadata: options?.metadata,
     };
 

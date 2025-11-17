@@ -4,7 +4,7 @@ const { RpcServer } = require('../dist');
 const main = async () => {
   const server = new RpcServer({
     connection: { url: 'amqp://localhost' },
-    queueName: 'calculator'
+    queueName: 'calculator',
   });
 
   server.registerHandler('ADD', ({ a, b }) => ({ sum: a + b }));
