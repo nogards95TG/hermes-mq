@@ -374,7 +374,7 @@ server.registerHandler('DELETE_USER', async (payload, ctx) => {
 ### Middleware Execution Order
 
 ```
-Global Middleware 1 → Global Middleware 2 → Handler Middleware 1 → Handler → Middleware 2 response → Middleware 1 response
+Global MW 1 → Global MW 2 → Handler MW 1 → Handler MW 2 → Handler → Handler MW 2 response → Handler MW 1 response → Global MW 2 response → Global MW 1 response
 ```
 
 ### Important Notes
