@@ -30,7 +30,10 @@ const isZodSchema = (schema: any): boolean => {
  * @internal
  */
 const isYupSchema = (schema: any): boolean => {
-  return schema && typeof schema.validate === 'function' && typeof schema.validateSync === 'function';
+  return schema &&
+    typeof schema.validate === 'function' &&
+    typeof schema.validateSync === 'function' &&
+    typeof schema.describe === 'function';
 };
 
 /**
@@ -38,7 +41,7 @@ const isYupSchema = (schema: any): boolean => {
  * @internal
  */
 const isAjvValidate = (schema: any): boolean => {
-  return typeof schema === 'function' && schema.schema !== undefined;
+  return typeof schema === 'function' && schema.schema !== undefined && 'errors' in schema;
 };
 
 /**

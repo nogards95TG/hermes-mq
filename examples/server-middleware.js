@@ -99,7 +99,10 @@ const main = async () => {
 
     // Keep server running
     console.log('Press Ctrl+C to stop');
-    await new Promise(() => {});
+    await new Promise((resolve) => {
+      process.on('SIGINT', resolve);
+      process.on('SIGTERM', resolve);
+    });
   } catch (error) {
     console.error('Server error:', error);
     await server.stop();

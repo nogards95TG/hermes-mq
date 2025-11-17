@@ -225,9 +225,10 @@ export class RpcServer {
 
     // Compose middleware and handler at registration time
     const allMiddleware = [...this.globalMiddlewares, ...handlerMiddlewares];
-    const composed = compose<TRequest, TResponse>(allMiddleware, handler);
+    // Adapter: wrap RpcHandler to match Handler signature for compose
+    const handlerAdapter = (payload: TRequest, ctx: any) => handler(payload, ctx?.metadata);
+    const composed = compose<TRequest, TResponse>(allMiddleware, handlerAdapter);
 
-    this.handlers.set(normalizedCommand, handler);
     this.composedHandlers.set(normalizedCommand, { composed });
 
     this.logger.debug(`Handler registered for command: ${normalizedCommand}`, {
