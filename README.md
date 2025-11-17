@@ -11,12 +11,19 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 
 - 🎯 **Type-Safe**: Full TypeScript support with generics
 - 🔌 **Connection Pooling**: Automatic channel reuse and health checks
-- 🔄 **Auto Reconnection**: Exponential backoff retry logic
+- 🔄 **Auto Reconnection**: Exponential backoff retry logic with circuit breaker
 - 🎭 **Dual Patterns**: Both RPC (request/response) and Pub/Sub (events)
 - 📝 **Flexible Logging**: Pluggable logger interface (Winston, Pino, etc.)
 - 🧪 **Testable**: Mock implementations and Testcontainers support
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
 - 📦 **Zero Dependencies**: Only depends on `amqplib`
+- ✅ **Publisher Confirms**: Built-in message persistence validation
+- 🔒 **Persistent Messages**: Auto messageId and timestamp on all messages
+- 🧹 **Memory Safe**: Automatic cleanup of expired RPC callbacks
+- 🔁 **Auto Recovery**: Consumer re-registration on server cancellation
+- 🚦 **Flow Control**: Built-in backpressure handling
+- ⏱️ **TTL & Limits**: Queue message expiration and size limits
+- 🛡️ **Best Practices**: Following RabbitMQ production recommendations
 
 ## Quick Start
 
@@ -280,6 +287,115 @@ const rpcServer = new RpcServer({
   prefetch: 1, // Process one message at a time
   handlerTimeout: 30000,
 });
+```
+
+### 7. Publisher Confirms (v1.0+)
+
+Ensure messages are safely persisted before considering them sent:
+
+```typescript
+const publisher = new Publisher({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  publisherConfirms: true,  // default: true
+  confirmMode: 'sync',      // 'sync' | 'async'
+  retry: {
+    enabled: true,
+    maxAttempts: 3,
+    initialDelay: 1000
+  }
+});
+```
+
+### 8. Persistent Messages with Auto Metadata (v1.0+)
+
+Messages include unique IDs and timestamps automatically:
+
+```typescript
+// All published messages automatically include:
+// - messageId: unique UUID
+// - timestamp: milliseconds since epoch  
+// - persistent: true by default
+
+await publisher.publish('user.created', userData);
+```
+
+### 9. Memory Leak Prevention (v1.0+)
+
+RPC clients automatically cleanup expired callbacks:
+
+```typescript
+const client = new RpcClient({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'service',
+  timeout: 30000  // Callbacks > 2x timeout are auto-cleaned every 30s
+});
+```
+
+### 10. Consumer Cancellation Recovery (v1.0+)
+
+Automatic re-registration when server cancels consumers:
+
+```typescript
+// RpcServer and Subscriber automatically detect cancellation
+// and re-register after 5 seconds with full logging
+```
+
+### 11. Mandatory Flag & Return Handling (v1.0+)
+
+Handle unroutable messages gracefully:
+
+```typescript
+const publisher = new Publisher({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  mandatory: true,
+  onReturn: (msg) => {
+    logger.error('Unroutable message', {
+      exchange: msg.exchange,
+      routingKey: msg.routingKey
+    });
+  }
+});
+```
+
+### 12. Flow Control & Backpressure (v1.0+)
+
+Automatic channel backpressure handling:
+
+```typescript
+// Publisher automatically:
+// - Detects when channel.publish() returns false
+// - Waits for 'drain' event before continuing
+// - Buffers pending writes internally
+```
+
+### 13. Queue Limits & TTL (v1.0+)
+
+Configure message expiration and queue size:
+
+```typescript
+await connectionManager.assertQueue('my-queue', {
+  durable: true,
+  messageTtl: 3600000,        // 1 hour
+  maxLength: 10000,
+  overflow: 'reject-publish'   // or 'drop-head', 'reject-publish-dlx'
+});
+```
+
+### 14. Enhanced Connection Recovery (v1.0+)
+
+Exponential backoff with heartbeat monitoring:
+
+```typescript
+const config = {
+  url: 'amqp://localhost',
+  reconnect: true,
+  reconnectInterval: 5000,
+  maxReconnectAttempts: 10,
+  heartbeat: 60  // Recommended: 30-60s (warning if 0)
+};
+// Delay: min(base * 2^attempt, 60s) = 5s, 10s, 20s, 40s, 60s...
 ```
 
 ## 🏗️ Development
