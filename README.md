@@ -297,13 +297,13 @@ Ensure messages are safely persisted before considering them sent:
 const publisher = new Publisher({
   connection: { url: 'amqp://localhost' },
   exchange: 'events',
-  publisherConfirms: true,  // default: true
-  confirmMode: 'sync',      // 'sync' | 'async'
+  publisherConfirms: true, // default: true
+  confirmMode: 'sync', // 'sync' | 'async'
   retry: {
     enabled: true,
     maxAttempts: 3,
-    initialDelay: 1000
-  }
+    initialDelay: 1000,
+  },
 });
 ```
 
@@ -314,7 +314,7 @@ Messages include unique IDs and timestamps automatically:
 ```typescript
 // All published messages automatically include:
 // - messageId: unique UUID
-// - timestamp: milliseconds since epoch  
+// - timestamp: milliseconds since epoch
 // - persistent: true by default
 
 await publisher.publish('user.created', userData);
@@ -328,7 +328,7 @@ RPC clients automatically cleanup expired callbacks:
 const client = new RpcClient({
   connection: { url: 'amqp://localhost' },
   queueName: 'service',
-  timeout: 30000  // Callbacks > 2x timeout are auto-cleaned every 30s
+  timeout: 30000, // Callbacks > 2x timeout are auto-cleaned every 30s
 });
 ```
 
@@ -353,9 +353,9 @@ const publisher = new Publisher({
   onReturn: (msg) => {
     logger.error('Unroutable message', {
       exchange: msg.exchange,
-      routingKey: msg.routingKey
+      routingKey: msg.routingKey,
     });
-  }
+  },
 });
 ```
 
@@ -377,9 +377,9 @@ Configure message expiration and queue size:
 ```typescript
 await connectionManager.assertQueue('my-queue', {
   durable: true,
-  messageTtl: 3600000,        // 1 hour
+  messageTtl: 3600000, // 1 hour
   maxLength: 10000,
-  overflow: 'reject-publish'   // or 'drop-head', 'reject-publish-dlx'
+  overflow: 'reject-publish', // or 'drop-head', 'reject-publish-dlx'
 });
 ```
 
@@ -393,7 +393,7 @@ const config = {
   reconnect: true,
   reconnectInterval: 5000,
   maxReconnectAttempts: 10,
-  heartbeat: 60  // Recommended: 30-60s (warning if 0)
+  heartbeat: 60, // Recommended: 30-60s (warning if 0)
 };
 // Delay: min(base * 2^attempt, 60s) = 5s, 10s, 20s, 40s, 60s...
 ```

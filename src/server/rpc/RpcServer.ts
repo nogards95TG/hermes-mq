@@ -204,7 +204,7 @@ export class RpcServer {
       this.channel.on('cancel', () => {
         this.logger.warn('Consumer was cancelled by server, attempting to re-register...');
         this.isRunning = false;
-        
+
         // Attempt to re-register the consumer after a delay
         setTimeout(() => {
           this.reRegisterConsumer().catch((error) => {
@@ -253,7 +253,7 @@ export class RpcServer {
 
     try {
       this.logger.info('Re-registering consumer...');
-      
+
       // Get or recreate channel
       if (!this.channel || !(this.channel as any).connection) {
         const connection = await this.connectionManager.getConnection();

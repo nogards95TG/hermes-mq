@@ -358,11 +358,14 @@ export class Subscriber {
     channel.on('cancel', () => {
       this.config.logger.warn('Consumer was cancelled by server, attempting to re-register...');
       this.running = false;
-      
+
       // Attempt to re-register the consumer after a delay
       setTimeout(() => {
         this.reRegisterConsumer().catch((error) => {
-          this.config.logger.error('Failed to re-register consumer after cancellation', error as Error);
+          this.config.logger.error(
+            'Failed to re-register consumer after cancellation',
+            error as Error
+          );
         });
       }, 5000);
     });
@@ -380,7 +383,7 @@ export class Subscriber {
 
     try {
       this.config.logger.info('Re-registering subscriber consumer...');
-      
+
       // Get or recreate channel
       const channel = await this.ensureChannel();
 
