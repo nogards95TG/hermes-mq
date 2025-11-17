@@ -4,7 +4,7 @@
 
 // Connection Management
 export { ConnectionManager } from './connection/ConnectionManager';
-export type { ConnectionConfig } from './connection/ConnectionManager';
+export type { ConnectionConfig, QueueAssertionOptions } from './connection/ConnectionManager';
 
 // Channel Pool
 export { ChannelPool } from './connection/ChannelPool';

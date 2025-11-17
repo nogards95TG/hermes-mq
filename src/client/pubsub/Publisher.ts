@@ -1,4 +1,5 @@
 import { Channel } from 'amqplib';
+import { randomUUID } from 'crypto';
 import {
   ConnectionManager,
   type Logger,
@@ -35,15 +36,31 @@ export interface PublisherConfig {
   exchangeType?: 'topic' | 'fanout' | 'direct';
   defaultExchange?: string;
   persistent?: boolean;
+  publisherConfirms?: boolean;
+  confirmMode?: 'sync' | 'async';
+  mandatory?: boolean;
+  onReturn?: (msg: ReturnedMessage) => void;
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+}
+
+/**
+ * Returned message information
+ */
+export interface ReturnedMessage {
+  replyCode: number;
+  replyText: string;
+  exchange: string;
+  routingKey: string;
+  message: Buffer;
 }
 
 interface PublishOptions {
   exchange?: string;
   routingKey?: string;
   persistent?: boolean;
+  mandatory?: boolean;
   metadata?: Record<string, any>;
 }
 
@@ -71,13 +88,22 @@ interface PublishOptions {
 export class Publisher {
   private connectionManager: ConnectionManager;
   private channel?: Channel;
-  private config: Required<Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType'>> & {
+  private config: Required<
+    Omit<
+      PublisherConfig,
+      'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'
+    >
+  > & {
     exchanges?: PublisherConfig['exchanges'];
     exchange?: string;
     exchangeType?: 'topic' | 'fanout' | 'direct';
+    onReturn?: (msg: ReturnedMessage) => void;
+    confirmMode?: 'sync' | 'async';
   };
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
+  private writeBuffer: Array<() => Promise<void>> = [];
+  private isWriting = false;
 
   /**
    * Create a new Publisher instance
@@ -97,6 +123,10 @@ export class Publisher {
       exchangeType: config.exchangeType ?? 'topic',
       defaultExchange: config.defaultExchange ?? config.exchange ?? 'amq.topic',
       persistent: config.persistent ?? true,
+      publisherConfirms: config.publisherConfirms ?? true,
+      confirmMode: config.confirmMode ?? 'sync',
+      mandatory: config.mandatory ?? false,
+      onReturn: config.onReturn,
       retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
@@ -165,38 +195,62 @@ export class Publisher {
     const exchange = options.exchange ?? this.config.defaultExchange;
     const routingKey = options.routingKey ?? eventName;
     const persistent = options.persistent ?? this.config.persistent;
+    const mandatory = options.mandatory ?? this.config.mandatory;
 
     // Ensure exchange exists with correct type
     const exchangeType = this.exchangeTypes.get(exchange) ?? this.config.exchangeType ?? 'topic';
     await this.assertExchange(channel, exchange, exchangeType);
 
+    const messageId = randomUUID();
+    const timestamp = Date.now();
+
     const envelope = {
       eventName,
       data,
-      timestamp: Date.now(),
+      timestamp,
       metadata: options.metadata,
     };
 
     const payload = this.config.serializer.encode(envelope);
 
-    try {
-      const published = channel.publish(exchange, routingKey, payload, {
-        persistent,
-        contentType: 'application/json',
-        timestamp: envelope.timestamp,
-      });
+    const publishOperation = async () => {
+      try {
+        const published = channel.publish(exchange, routingKey, payload, {
+          persistent,
+          contentType: 'application/json',
+          timestamp,
+          messageId,
+          mandatory,
+        });
 
-      // Wait for channel to drain if needed
-      if (!published) {
-        await new Promise<void>((resolve) => channel.once('drain', resolve));
+        // Handle backpressure - wait for channel to drain if needed
+        if (!published) {
+          this.config.logger.debug('Channel buffer full, waiting for drain...');
+          await new Promise<void>((resolve) => channel.once('drain', resolve));
+        }
+
+        // Wait for broker confirmation if enabled
+        if (this.config.publisherConfirms) {
+          if (this.config.confirmMode === 'sync') {
+            await (channel as any).waitForConfirms();
+          }
+          // Async mode: confirmations handled via channel.on('ack'/'nack')
+        }
+
+        this.config.logger.debug(`Published event "${eventName}" to ${exchange}/${routingKey}`, {
+          messageId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
       }
+    };
 
-      // Wait for broker confirmation
-      await (channel as any).waitForConfirms();
-      this.config.logger.debug(`Published event "${eventName}" to ${exchange}/${routingKey}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
+    // Execute publish with retry if configured
+    if (this.config.retry?.enabled) {
+      await this.publishWithRetry(publishOperation);
+    } else {
+      await publishOperation();
     }
   }
 
@@ -262,7 +316,12 @@ export class Publisher {
     }
 
     const connection = await this.connectionManager.getConnection();
-    const channel = await (connection as any).createConfirmChannel();
+    
+    // Create confirm channel if publisher confirms are enabled, otherwise regular channel
+    const channel = this.config.publisherConfirms
+      ? await (connection as any).createConfirmChannel()
+      : await (connection as any).createChannel();
+    
     this.channel = channel;
 
     // Handle channel lifecycle
@@ -276,6 +335,33 @@ export class Publisher {
       this.config.logger.error('Publisher channel error:', error);
     });
 
+    // Handle returned messages (mandatory flag)
+    channel.on('return', (msg: any) => {
+      const returnedMsg: ReturnedMessage = {
+        replyCode: msg.fields.replyCode,
+        replyText: msg.fields.replyText,
+        exchange: msg.fields.exchange,
+        routingKey: msg.fields.routingKey,
+        message: msg.content,
+      };
+
+      this.config.logger.warn('Message returned (not routed)', {
+        exchange: returnedMsg.exchange,
+        routingKey: returnedMsg.routingKey,
+        replyText: returnedMsg.replyText,
+      });
+
+      if (this.config.onReturn) {
+        this.config.onReturn(returnedMsg);
+      }
+    });
+
+    // Handle drain event for backpressure
+    channel.on('drain', () => {
+      this.config.logger.debug('Channel drained, resuming writes');
+      this.processWriteBuffer();
+    });
+
     // Assert pre-configured exchanges
     if (this.config.exchanges) {
       for (const ex of this.config.exchanges) {
@@ -284,6 +370,65 @@ export class Publisher {
     }
 
     return channel;
+  }
+
+  /**
+   * Process buffered write operations
+   */
+  private async processWriteBuffer(): Promise<void> {
+    if (this.isWriting || this.writeBuffer.length === 0) {
+      return;
+    }
+
+    this.isWriting = true;
+
+    while (this.writeBuffer.length > 0) {
+      const operation = this.writeBuffer.shift();
+      if (operation) {
+        try {
+          await operation();
+        } catch (error) {
+          this.config.logger.error('Error processing buffered write', error as Error);
+        }
+      }
+    }
+
+    this.isWriting = false;
+  }
+
+  /**
+   * Publish with retry logic
+   */
+  private async publishWithRetry(operation: () => Promise<void>): Promise<void> {
+    const maxAttempts = this.config.retry?.maxAttempts ?? 3;
+    const initialDelay = this.config.retry?.initialDelay ?? 1000;
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await operation();
+        return; // Success
+      } catch (error) {
+        lastError = error as Error;
+        this.config.logger.warn(`Publish attempt ${attempt} failed`, {
+          error: lastError.message,
+          attempt,
+          maxAttempts,
+        });
+
+        if (attempt < maxAttempts) {
+          // Exponential backoff
+          const delay = initialDelay * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    // All retries failed
+    throw new HermesError(
+      `Failed to publish after ${maxAttempts} attempts: ${lastError?.message}`,
+      'PUBLISH_ERROR'
+    );
   }
 
   /**
@@ -298,7 +443,7 @@ export class Publisher {
       autoDelete?: boolean;
       internal?: boolean;
       arguments?: Record<string, unknown>;
-    } = { durable: true }
+    } = { durable: true, autoDelete: false }
   ): Promise<void> {
     if (this.assertedExchanges.has(exchange)) {
       return;

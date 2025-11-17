@@ -353,7 +353,54 @@ export class Subscriber {
       this.config.logger.error('Subscriber channel error:', error);
     });
 
+    // Handle consumer cancellation (server-side cancel)
+    channel.on('cancel', () => {
+      this.config.logger.warn('Consumer was cancelled by server, attempting to re-register...');
+      this.running = false;
+      
+      // Attempt to re-register the consumer after a delay
+      setTimeout(() => {
+        this.reRegisterConsumer().catch((error) => {
+          this.config.logger.error('Failed to re-register consumer after cancellation', error as Error);
+        });
+      }, 5000);
+    });
+
     return channel;
+  }
+
+  /**
+   * Re-register consumer after cancellation
+   */
+  private async reRegisterConsumer(): Promise<void> {
+    if (this.running || !this.generatedQueueName) {
+      return; // Already running or not started yet
+    }
+
+    try {
+      this.config.logger.info('Re-registering subscriber consumer...');
+      
+      // Get or recreate channel
+      const channel = await this.ensureChannel();
+
+      // Set prefetch
+      await channel.prefetch(this.config.prefetch);
+
+      // Start consuming again
+      const consumeResult = await channel.consume(
+        this.generatedQueueName,
+        (msg) => this.handleMessage(msg),
+        { noAck: false }
+      );
+
+      this.consumerTag = consumeResult.consumerTag;
+      this.running = true;
+
+      this.config.logger.info('Subscriber consumer re-registered successfully');
+    } catch (error) {
+      this.config.logger.error('Failed to re-register subscriber consumer', error as Error);
+      throw error;
+    }
   }
 
   /**
