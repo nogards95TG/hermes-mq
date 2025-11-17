@@ -20,6 +20,8 @@ export interface RpcClientConfig {
   connection: ConnectionConfig;
   queueName: string;
   timeout?: number;
+  publisherConfirms?: boolean;
+  persistent?: boolean;
   serializer?: Serializer;
   logger?: Logger;
   assertQueue?: boolean;
@@ -33,6 +35,7 @@ interface PendingRequest<T> {
   resolve: (value: T) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  timestamp: number;
   abortController?: AbortController;
 }
 
@@ -41,6 +44,8 @@ interface PendingRequest<T> {
  */
 const DEFAULT_CONFIG = {
   timeout: 30000,
+  publisherConfirms: true,
+  persistent: false,
   assertQueue: true,
   queueOptions: {
     durable: true,
@@ -79,6 +84,7 @@ export class RpcClient {
   private isReady = false;
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   /**
    * Create a new RPC client instance
@@ -90,6 +96,9 @@ export class RpcClient {
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
+    
+    // Start periodic cleanup of expired callbacks
+    this.startCleanupInterval();
   }
 
   /**
@@ -198,6 +207,7 @@ export class RpcClient {
 
     const correlationId = randomUUID();
     const timeout = options?.timeout || this.config.timeout;
+    const messageId = randomUUID();
 
     // Create request envelope
     const request: RequestEnvelope<TRequest> = {
@@ -221,11 +231,12 @@ export class RpcClient {
         );
       }, timeout);
 
-      // Track pending request
+      // Track pending request with timestamp
       this.pendingRequests.set(correlationId, {
         resolve,
         reject,
         timeout: timeoutHandle,
+        timestamp: Date.now(),
       });
 
       // Handle AbortSignal
@@ -247,8 +258,10 @@ export class RpcClient {
         this.channel!.sendToQueue(this.config.queueName, content, {
           correlationId,
           replyTo: this.replyQueue!,
-          persistent: false,
+          persistent: this.config.persistent,
           contentType: 'application/json',
+          messageId,
+          timestamp: request.timestamp,
         });
 
         this.logger.debug('RPC request sent', {
@@ -312,12 +325,57 @@ export class RpcClient {
   }
 
   /**
+   * Start periodic cleanup of expired pending requests
+   */
+  private startCleanupInterval(): void {
+    // Run cleanup every 30 seconds
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupExpiredRequests();
+    }, 30000);
+    
+    // Prevent the interval from keeping the process alive
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref();
+    }
+  }
+
+  /**
+   * Cleanup expired pending requests to prevent memory leaks
+   */
+  private cleanupExpiredRequests(): void {
+    const now = Date.now();
+    const maxAge = this.config.timeout * 2; // Cleanup requests older than 2x timeout
+    let cleanedCount = 0;
+
+    for (const [correlationId, pending] of this.pendingRequests.entries()) {
+      const age = now - pending.timestamp;
+      if (age > maxAge) {
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(correlationId);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      this.logger.debug(`Cleaned up ${cleanedCount} expired pending requests`, {
+        remaining: this.pendingRequests.size,
+      });
+    }
+  }
+
+  /**
    * Close the RPC client and cleanup resources
    *
    * Cancels all pending requests and closes the connection.
    * After calling close(), the client cannot be reused.
    */
   async close(): Promise<void> {
+    // Stop cleanup interval
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
     if (this.consumerTag && this.channel) {
       try {
         await this.channel.cancel(this.consumerTag);

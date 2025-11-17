@@ -200,6 +200,19 @@ export class RpcServer {
         this.isRunning = false;
       });
 
+      // Handle consumer cancellation (server-side cancel)
+      this.channel.on('cancel', () => {
+        this.logger.warn('Consumer was cancelled by server, attempting to re-register...');
+        this.isRunning = false;
+        
+        // Attempt to re-register the consumer after a delay
+        setTimeout(() => {
+          this.reRegisterConsumer().catch((error) => {
+            this.logger.error('Failed to re-register consumer after cancellation', error as Error);
+          });
+        }, 5000);
+      });
+
       // Assert the request queue
       if (this.config.assertQueue) {
         await this.channel.assertQueue(this.config.queueName, this.config.queueOptions);
@@ -226,6 +239,43 @@ export class RpcServer {
       });
     } catch (error) {
       this.logger.error('Failed to start RpcServer', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Re-register consumer after cancellation
+   */
+  private async reRegisterConsumer(): Promise<void> {
+    if (this.isRunning) {
+      return; // Already running
+    }
+
+    try {
+      this.logger.info('Re-registering consumer...');
+      
+      // Get or recreate channel
+      if (!this.channel || !(this.channel as any).connection) {
+        const connection = await this.connectionManager.getConnection();
+        this.channel = (await (connection as any).createConfirmChannel()) as amqp.ConfirmChannel;
+      }
+
+      // Set prefetch
+      await this.channel.prefetch(this.config.prefetch);
+
+      // Start consuming again
+      const consumer = await this.channel.consume(
+        this.config.queueName,
+        (msg: amqp.ConsumeMessage | null) => this.handleRequest(msg),
+        { noAck: false }
+      );
+
+      this.consumerTag = consumer.consumerTag;
+      this.isRunning = true;
+
+      this.logger.info('Consumer re-registered successfully');
+    } catch (error) {
+      this.logger.error('Failed to re-register consumer', error as Error);
       throw error;
     }
   }

@@ -25,6 +25,9 @@ export interface QueueAssertionOptions {
   autoDelete?: boolean;
   arguments?: Record<string, any>;
   dlq?: DLQOptions;
+  messageTtl?: number;
+  maxLength?: number;
+  overflow?: 'drop-head' | 'reject-publish' | 'reject-publish-dlx';
 }
 
 /**
@@ -143,7 +146,17 @@ export class ConnectionManager extends EventEmitter {
     this.isConnecting = true;
 
     try {
-      this.logger.info('Connecting to RabbitMQ', { url: this.maskUrl(this.config.url) });
+      // Warn if heartbeat is disabled
+      if (this.config.heartbeat === 0) {
+        this.logger.warn(
+          'Heartbeat is disabled (0). This is not recommended for production as it may lead to connection issues. Consider setting heartbeat to 60 or 30 seconds.'
+        );
+      }
+
+      this.logger.info('Connecting to RabbitMQ', {
+        url: this.maskUrl(this.config.url),
+        heartbeat: this.config.heartbeat,
+      });
 
       this.connection = (await amqp.connect(this.config.url, {
         heartbeat: this.config.heartbeat,
@@ -208,7 +221,7 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * Schedule reconnection attempt
+   * Schedule reconnection attempt with exponential backoff
    */
   private scheduleReconnect(): void {
     if (this.reconnectTimer || this.isClosed) return;
@@ -217,22 +230,29 @@ export class ConnectionManager extends EventEmitter {
 
     if (this.reconnectAttempts > this.config.maxReconnectAttempts) {
       this.logger.error('Max reconnection attempts reached');
+      this.emit('maxReconnectAttemptsReached');
       return;
     }
 
+    // Exponential backoff: delay = baseInterval * 2^(attempt - 1)
+    // Capped at 60 seconds
+    const baseInterval = this.config.reconnectInterval;
+    const exponentialDelay = baseInterval * Math.pow(2, this.reconnectAttempts - 1);
+    const delay = Math.min(exponentialDelay, 60000);
+
     this.logger.info(
       `Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts}`,
-      { interval: this.config.reconnectInterval }
+      { delay, attempt: this.reconnectAttempts }
     );
 
-    this.emit('reconnecting', { attempt: this.reconnectAttempts });
+    this.emit('reconnecting', { attempt: this.reconnectAttempts, delay });
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch(() => {
         // Error already logged and emitted in connect()
       });
-    }, this.config.reconnectInterval);
+    }, delay);
   }
 
   /**
@@ -307,6 +327,21 @@ export class ConnectionManager extends EventEmitter {
 
     try {
       const queueArgs: Record<string, any> = options?.arguments ?? {};
+
+      // Configure message TTL
+      if (options?.messageTtl !== undefined) {
+        queueArgs['x-message-ttl'] = options.messageTtl;
+      }
+
+      // Configure max length
+      if (options?.maxLength !== undefined) {
+        queueArgs['x-max-length'] = options.maxLength;
+      }
+
+      // Configure overflow behavior
+      if (options?.overflow) {
+        queueArgs['x-overflow'] = options.overflow;
+      }
 
       // Configure DLQ if enabled
       if (options?.dlq?.enabled) {
