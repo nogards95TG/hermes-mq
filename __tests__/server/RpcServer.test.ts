@@ -126,7 +126,7 @@ describe('RpcServer', () => {
 
       const channel = await mockConnection.createConfirmChannel();
       expect(channel.assertQueue).toHaveBeenCalledWith('test-queue', { durable: true });
-      expect(channel.prefetch).toHaveBeenCalledWith(10);
+      expect(channel.prefetch).toHaveBeenCalledWith(1);
       expect(channel.consume).toHaveBeenCalled();
     });
 
