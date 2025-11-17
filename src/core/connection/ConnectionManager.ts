@@ -71,6 +71,7 @@ export class ConnectionManager extends EventEmitter {
   private config: Required<Omit<ConnectionConfig, 'logger'>>;
   private logger: Logger;
   private isClosed = false;
+  private isClosing = false;
 
   private constructor(config: ConnectionConfig) {
     super();
@@ -214,7 +215,7 @@ export class ConnectionManager extends EventEmitter {
       this.connection = null;
       this.emit('disconnected');
 
-      if (this.config.reconnect && !this.isClosed) {
+      if (this.config.reconnect && !this.isClosed && !this.isClosing) {
         this.scheduleReconnect();
       }
     });
@@ -271,6 +272,7 @@ export class ConnectionManager extends EventEmitter {
    * from the singleton registry. After calling close(), the manager cannot be reused.
    */
   async close(): Promise<void> {
+    this.isClosing = true;
     this.isClosed = true;
 
     if (this.reconnectTimer) {
@@ -400,7 +402,18 @@ export class ConnectionManager extends EventEmitter {
       if (!msg) return;
 
       try {
-        const content = JSON.parse(msg.content.toString());
+        let content;
+        try {
+          content = JSON.parse(msg.content.toString());
+        } catch (parseError) {
+          this.logger.error('Failed to parse DLQ message JSON', parseError as Error, {
+            queue: queueName,
+            messageId: msg.properties.messageId,
+          });
+          await channel.nack(msg, false, false);
+          return;
+        }
+
         await handler(content);
         await channel.ack(msg);
       } catch (error) {

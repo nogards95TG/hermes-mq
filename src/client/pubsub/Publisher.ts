@@ -64,6 +64,16 @@ interface PublishOptions {
   metadata?: Record<string, any>;
 }
 
+type RequiredPublisherConfig = Required<
+  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
+> & {
+  exchanges?: PublisherConfig['exchanges'];
+  exchange?: string;
+  exchangeType?: 'topic' | 'fanout' | 'direct';
+  onReturn?: (msg: ReturnedMessage) => void;
+  confirmMode?: 'sync' | 'async';
+};
+
 /**
  * Publisher for Pub/Sub pattern over RabbitMQ
  *
@@ -88,18 +98,7 @@ interface PublishOptions {
 export class Publisher {
   private connectionManager: ConnectionManager;
   private channel?: Channel;
-  private config: Required<
-    Omit<
-      PublisherConfig,
-      'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'
-    >
-  > & {
-    exchanges?: PublisherConfig['exchanges'];
-    exchange?: string;
-    exchangeType?: 'topic' | 'fanout' | 'direct';
-    onReturn?: (msg: ReturnedMessage) => void;
-    confirmMode?: 'sync' | 'async';
-  };
+  private config: RequiredPublisherConfig;
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
   private writeBuffer: Array<() => Promise<void>> = [];
@@ -316,12 +315,12 @@ export class Publisher {
     }
 
     const connection = await this.connectionManager.getConnection();
-    
+
     // Create confirm channel if publisher confirms are enabled, otherwise regular channel
     const channel = this.config.publisherConfirms
       ? await (connection as any).createConfirmChannel()
       : await (connection as any).createChannel();
-    
+
     this.channel = channel;
 
     // Handle channel lifecycle

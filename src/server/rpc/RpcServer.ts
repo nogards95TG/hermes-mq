@@ -44,7 +44,7 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
  * Default RPC server configuration
  */
 const DEFAULT_CONFIG = {
-  prefetch: 10,
+  prefetch: 1,
   assertQueue: true,
   queueOptions: {
     durable: true,
@@ -403,6 +403,7 @@ export class RpcServer {
     replyTo: string | undefined
   ): Promise<void> {
     const strategy = this.config.ackStrategy;
+    const maxRetries = strategy.maxRetries ?? 3;
     const attempts = (msg.properties.headers?.['x-retry-count'] as number) || 0;
 
     if (strategy.mode === 'manual') {
@@ -452,7 +453,7 @@ export class RpcServer {
 
     // Determine action based on retry count and strategy
     if (this.channel) {
-      if (shouldRequeue && attempts < (strategy.maxRetries || 3)) {
+      if (shouldRequeue && attempts < maxRetries) {
         // Calculate delay if configured
         let delay = 0;
         if (strategy.retryDelay) {
@@ -495,7 +496,7 @@ export class RpcServer {
         this.logger.warn('Message sent to DLQ', {
           correlationId,
           attempts,
-          maxRetries: strategy.maxRetries,
+          maxRetries,
         });
 
         this.channel.nack(msg, false, false); // NACK without requeue - goes to DLQ
@@ -563,6 +564,9 @@ export class RpcServer {
           });
         }
       }
+
+      // Clear deduplication cache
+      this.deduplicator.clear();
 
       // Close channel
       if (this.channel) {

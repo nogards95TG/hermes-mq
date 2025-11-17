@@ -52,6 +52,10 @@ const DEFAULT_CONFIG = {
   },
 };
 
+type RequiredRpcClientConfig = Required<
+  Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>
+>;
+
 /**
  * RpcClient implements request/response pattern over RabbitMQ
  *
@@ -75,7 +79,7 @@ const DEFAULT_CONFIG = {
  * ```
  */
 export class RpcClient {
-  private config: Required<Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>>;
+  private config: RequiredRpcClientConfig;
   private connectionManager: ConnectionManager;
   private channel: amqp.ConfirmChannel | null = null;
   private logger: Logger;
@@ -96,7 +100,7 @@ export class RpcClient {
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
-    
+
     // Start periodic cleanup of expired callbacks
     this.startCleanupInterval();
   }
@@ -332,7 +336,7 @@ export class RpcClient {
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredRequests();
     }, 30000);
-    
+
     // Prevent the interval from keeping the process alive
     if (this.cleanupInterval.unref) {
       this.cleanupInterval.unref();

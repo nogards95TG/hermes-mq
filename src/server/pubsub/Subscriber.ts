@@ -264,8 +264,9 @@ export class Subscriber {
     const queueResult = await channel.assertQueue(queueName, this.config.queueOptions);
     this.generatedQueueName = queueResult.queue;
 
-    // Bind queue to all registered patterns
-    for (const { pattern } of this.handlers) {
+    // Bind queue to unique patterns
+    const uniquePatterns = new Set(this.handlers.map((h) => h.pattern));
+    for (const pattern of uniquePatterns) {
       await channel.bindQueue(this.generatedQueueName, this.config.exchange, pattern);
       this.config.logger.debug(
         `Bound queue ${this.generatedQueueName} to ${this.config.exchange} with pattern: ${pattern}`

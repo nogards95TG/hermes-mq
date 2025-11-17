@@ -168,8 +168,13 @@ export class MessageDeduplicator {
    */
   private extractKey(msg: Message): string {
     if (this.options.keyExtractor) {
-      const data = JSON.parse(msg.content.toString());
-      return this.options.keyExtractor(data);
+      try {
+        const data = JSON.parse(msg.content.toString());
+        return this.options.keyExtractor(data);
+      } catch (parseError) {
+        // If parsing fails, fall back to default key extraction
+        return msg.properties.messageId || this.hashContent(msg.content);
+      }
     }
 
     // Default: use messageId or create hash from content
