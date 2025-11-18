@@ -16,7 +16,7 @@ const main = async () => {
     serializer: new JsonSerializer(),
     logger: new ConsoleLogger(),
     assertQueue: true,
-    queueOptions: { durable: true, autoDelete: false }
+    queueOptions: { durable: true, autoDelete: false },
   });
 
   server.registerHandler('ADD', ({ a, b }, meta) => {

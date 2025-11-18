@@ -4,7 +4,7 @@ const { Publisher } = require('../dist');
 const main = async () => {
   const publisher = new Publisher({
     connection: { url: 'amqp://localhost' },
-    exchange: 'events'
+    exchange: 'events',
   });
 
   await publisher.publish('user.created', { userId: '123', name: 'Alice' });

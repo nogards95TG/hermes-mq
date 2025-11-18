@@ -40,6 +40,32 @@ export type {
 } from './core';
 
 // ============================================================================
+// MIDDLEWARE - Express/Koa-like middleware system
+// ============================================================================
+
+/**
+ * Middleware system for request/response handling
+ */
+export {
+  compose,
+  createContext,
+  validate,
+  validateAdapter,
+  retry,
+} from './middleware';
+
+export type {
+  RpcContext,
+  Middleware,
+  Handler,
+  ComposedMiddleware,
+  ValidateAdapter,
+  ValidationResult,
+  ValidationErrorResponse,
+  RetryPolicyOptions,
+} from './middleware';
+
+// ============================================================================
 // CLIENT - RPC Client & Publisher
 // ============================================================================
 

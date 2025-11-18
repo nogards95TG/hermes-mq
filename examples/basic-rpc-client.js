@@ -4,7 +4,7 @@ const { RpcClient } = require('../dist');
 const main = async () => {
   const client = new RpcClient({
     connection: { url: 'amqp://localhost' },
-    queueName: 'calculator'
+    queueName: 'calculator',
   });
 
   const result = await client.send('ADD', { a: 2, b: 3 });

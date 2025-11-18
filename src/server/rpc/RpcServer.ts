@@ -15,6 +15,7 @@ import {
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
+import { Middleware, compose, createContext, ComposedMiddleware } from '../../middleware';
 
 /**
  * RPC Server configuration
@@ -97,6 +98,8 @@ export class RpcServer {
   private logger: Logger;
   private serializer: Serializer;
   private handlers = new Map<string, RpcHandler>();
+  private globalMiddlewares: Middleware[] = [];
+  private composedHandlers = new Map<string, { composed: ComposedMiddleware; meta?: Record<string, any> }>();
   private isRunning = false;
   private consumerTag: string | null = null;
   private inFlightMessages = new Set<string>();
@@ -118,34 +121,100 @@ export class RpcServer {
   }
 
   /**
-   * Register a command handler
+   * Register global middleware
+   *
+   * Global middleware will be applied to all handlers.
+   * IMPORTANT: Must be called BEFORE registerHandler() to take effect.
+   * Any use() calls after the first handler registration will be ignored (logged).
+   *
+   * @param middlewares - Middleware functions to register
+   *
+   * @example
+   * ```typescript
+   * server.use(loggingMiddleware);
+   * server.use(authMiddleware);
+   * server.registerHandler('COMMAND', handler);
+   * ```
+   */
+  use(...middlewares: Middleware[]): void {
+    // Log warning if handlers already registered
+    if (this.composedHandlers.size > 0) {
+      this.logger.warn(
+        '[hermes-mq] server.use() after handler registration ignored for performance. ' +
+          'Call use() before registerHandler()'
+      );
+      return;
+    }
+
+    this.globalMiddlewares.push(...middlewares);
+    this.logger.debug(`Registered ${middlewares.length} global middlewares`, {
+      totalGlobalMiddlewares: this.globalMiddlewares.length,
+    });
+  }
+
+  /**
+   * Register a command handler with optional middleware
+   *
+   * Can register handler with or without middleware:
+   * - registerHandler('CMD', handler)
+   * - registerHandler('CMD', middleware1, middleware2, handler)
+   *
+   * Middleware are executed in order: global → handler-specific → handler
    *
    * @param command - The command name (case-insensitive)
-   * @param handler - Function that processes the request and returns a response
+   * @param middlewaresAndHandler - Middleware functions followed by handler function
    * @throws {ValidationError} When command or handler is invalid
    *
    * @example
    * ```typescript
+   * // Without middleware
    * server.registerHandler('CALCULATE', (data) => {
    *   return { result: data.a + data.b };
    * });
    *
-   * server.registerHandler('GET_USER', async (data) => {
-   *   const user = await db.getUser(data.userId);
-   *   return user;
-   * });
+   * // With middleware
+   * server.registerHandler(
+   *   'GET_USER',
+   *   validate(userSchema),
+   *   retry({ maxAttempts: 3 }),
+   *   async (payload) => {
+   *     const user = await db.getUser(payload.userId);
+   *     return user;
+   *   }
+   * );
    * ```
    */
   registerHandler<TRequest = any, TResponse = any>(
     command: string,
-    handler: RpcHandler<TRequest, TResponse>
+    ...middlewaresAndHandler: Array<Middleware<TRequest, TResponse> | RpcHandler<TRequest, TResponse>>
   ): void {
     if (!command) {
       throw new ValidationError('Command is required');
     }
 
+    if (middlewaresAndHandler.length === 0) {
+      throw new ValidationError('At least a handler function is required');
+    }
+
+    // Extract handler (must be the last argument) and middleware
+    const lastArg = middlewaresAndHandler[middlewaresAndHandler.length - 1];
+    const handler = lastArg as RpcHandler<TRequest, TResponse>;
+
     if (typeof handler !== 'function') {
-      throw new ValidationError('Handler must be a function');
+      throw new ValidationError('Last argument must be a handler function');
+    }
+
+    // Extract middlewares (all arguments except the last)
+    const handlerMiddlewares = middlewaresAndHandler.slice(0, -1) as Middleware<
+      TRequest,
+      TResponse
+    >[];
+
+    // Validate all middlewares are functions
+    for (let i = 0; i < handlerMiddlewares.length; i++) {
+      if (typeof handlerMiddlewares[i] !== 'function') {
+        throw new ValidationError(`Middleware at index ${i} must be a function`);
+      }
     }
 
     const normalizedCommand = command.toUpperCase();
@@ -154,8 +223,18 @@ export class RpcServer {
       this.logger.warn(`Overwriting existing handler for command: ${normalizedCommand}`);
     }
 
-    this.handlers.set(normalizedCommand, handler);
-    this.logger.debug(`Handler registered for command: ${normalizedCommand}`);
+    // Compose middleware and handler at registration time
+    const allMiddleware = [...this.globalMiddlewares, ...handlerMiddlewares];
+    // Adapter: wrap RpcHandler to match Handler signature for compose
+    const handlerAdapter = (payload: TRequest, ctx: any) => handler(payload, ctx?.metadata);
+    const composed = compose<TRequest, TResponse>(allMiddleware, handlerAdapter);
+
+    this.composedHandlers.set(normalizedCommand, { composed });
+
+    this.logger.debug(`Handler registered for command: ${normalizedCommand}`, {
+      globalMiddlewaresCount: this.globalMiddlewares.length,
+      handlerMiddlewaresCount: handlerMiddlewares.length,
+    });
   }
 
   /**
@@ -164,6 +243,7 @@ export class RpcServer {
   unregisterHandler(command: string): void {
     const normalizedCommand = command.toUpperCase();
     const deleted = this.handlers.delete(normalizedCommand);
+    this.composedHandlers.delete(normalizedCommand);
 
     if (deleted) {
       this.logger.debug(`Handler unregistered for command: ${normalizedCommand}`);
@@ -332,17 +412,54 @@ export class RpcServer {
         correlationId,
       });
 
-      // Find handler
-      const handler = this.handlers.get(request.command.toUpperCase());
+      // Find composed handler (with middleware)
+      const normalizedCommand = request.command.toUpperCase();
+      const composedEntry = this.composedHandlers.get(normalizedCommand);
 
-      if (!handler) {
+      if (!composedEntry) {
         throw new Error(`No handler registered for command: ${request.command}`);
       }
 
       // Check for duplicate (if enabled)
       const deduplicationResult = await this.deduplicator.process(msg, async () => {
-        // Execute handler
-        return await handler(request.data, request.metadata);
+        // Create context for middleware
+        let responseData: any;
+        let responded = false;
+
+        const ctx = createContext<typeof request.data, any>(
+          normalizedCommand,
+          request.data,
+          msg.properties,
+          this.logger,
+          {
+            rawMessage: msg,
+            attempts: (msg.properties.headers?.['x-retry-count'] as number) || 0,
+            metadata: request.metadata,
+            reply: async (res: any) => {
+              responseData = res;
+              responded = true;
+            },
+            ack: () => {
+              if (this.channel && this.config.ackStrategy.mode === 'manual') {
+                this.channel.ack(msg);
+              }
+            },
+            nack: (requeue?: boolean) => {
+              if (this.channel && this.config.ackStrategy.mode === 'manual') {
+                this.channel.nack(msg, false, requeue ?? true);
+              }
+            },
+          }
+        );
+
+        // Execute composed middleware chain
+        const result = await composedEntry.composed(ctx);
+
+        // If context already has responseData from ctx.reply, use it; otherwise use result
+        if (responded) {
+          return responseData;
+        }
+        return result;
       });
 
       if (deduplicationResult.duplicate) {
