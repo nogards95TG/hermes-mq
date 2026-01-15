@@ -68,7 +68,7 @@ import { RpcServer } from 'hermes-mq';
 const server = new RpcServer({
   connection: { url: 'amqp://localhost' },
   queueName: 'users',
-  prefetch: 10,
+  // prefetch defaults to 10 (RabbitMQ best practice)
 });
 
 server
@@ -200,20 +200,44 @@ const server = new RpcServer({
 
 ### 4. Duplicate Detection
 
-Prevent reprocessing of duplicate messages using LRU cache:
+Prevent reprocessing of duplicate messages using LRU cache.
+
+> **⚠️ Important:** Deduplication is **disabled by default** to minimize overhead. Enable it only if your handlers are **not idempotent**.
+
+**When to enable deduplication:**
+
+- ✅ Payment processing
+- ✅ Email or notification sending
+- ✅ External API calls with side effects
+- ✅ Database writes that aren't idempotent
+
+**When deduplication is NOT needed:**
+
+- ❌ Read-only operations
+- ❌ Idempotent handlers (can safely retry)
+- ❌ Handlers that use database unique constraints
+
+**Example configuration:**
 
 ```typescript
 const server = new RpcServer({
   connection: { url: 'amqp://localhost' },
   queueName: 'payments',
   deduplication: {
-    enabled: true,
+    enabled: true, // Enable for non-idempotent operations
     cacheTTL: 300000, // 5 minutes
     cacheSize: 10000,
-    keyExtractor: (msg) => msg.transactionId,
   },
 });
 ```
+
+**Trade-offs:**
+
+- **Memory cost:** Each message ID is cached for the TTL duration
+- **CPU cost:** Cache lookup on every message
+- **False negatives:** Messages arriving after cache expiry will be reprocessed
+
+If your operations are naturally idempotent, keep deduplication disabled for better performance.
 
 ### 5. Error Isolation in Pub/Sub
 
@@ -334,12 +358,23 @@ const client = new RpcClient({
 
 ### 10. Consumer Cancellation Recovery (v1.0+)
 
-Automatic re-registration when server cancels consumers:
+Automatic re-registration when RabbitMQ cancels consumers (during maintenance, queue deletion, etc.):
 
 ```typescript
-// RpcServer and Subscriber automatically detect cancellation
-// and re-register after 5 seconds with full logging
+// Both RpcServer and Subscriber automatically:
+// - Detect consumer cancellation (null message)
+// - Re-register consumer with exponential backoff (5s, 10s, 20s, 40s, 60s max)
+// - Retry up to 5 times before giving up
+// - Log all reconnection attempts
+
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'service',
+  // No configuration needed - recovery is automatic
+});
 ```
+
+This ensures your services automatically recover from temporary RabbitMQ maintenance or configuration changes without manual intervention.
 
 ### 11. Mandatory Flag & Return Handling (v1.0+)
 

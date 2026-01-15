@@ -126,7 +126,7 @@ describe('RpcServer', () => {
 
       const channel = await mockConnection.createConfirmChannel();
       expect(channel.assertQueue).toHaveBeenCalledWith('test-queue', { durable: true });
-      expect(channel.prefetch).toHaveBeenCalledWith(1);
+      expect(channel.prefetch).toHaveBeenCalledWith(10);
       expect(channel.consume).toHaveBeenCalled();
     });
 
@@ -372,6 +372,81 @@ describe('RpcServer', () => {
       // Only called once (from first stop)
       const channel = await mockConnection.createConfirmChannel();
       expect(channel.cancel).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('configuration', () => {
+    it('should have prefetch of 10 by default', async () => {
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+
+      await server.start();
+
+      const channel = await mockConnection.createConfirmChannel();
+      expect(channel.prefetch).toHaveBeenCalledWith(10);
+    });
+
+    it('should allow custom prefetch value', async () => {
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+        prefetch: 20,
+      });
+
+      await server.start();
+
+      const channel = await mockConnection.createConfirmChannel();
+      expect(channel.prefetch).toHaveBeenCalledWith(20);
+    });
+  });
+
+  describe('consumer cancellation', () => {
+    beforeEach(() => {
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+    });
+
+    it('should handle consumer cancellation gracefully', async () => {
+      await server.start();
+      expect(server.isServerRunning()).toBe(true);
+
+      // Simulate consumer cancellation (msg = null)
+      await mockConnection._consumeCallback(null);
+
+      expect(server.isServerRunning()).toBe(false);
+    });
+
+    it('should attempt to reconnect after cancellation', async () => {
+      vi.useFakeTimers();
+
+      await server.start();
+
+      // Simulate consumer cancellation
+      await mockConnection._consumeCallback(null);
+
+      expect(server.isServerRunning()).toBe(false);
+
+      // Fast-forward time to trigger reconnection
+      vi.advanceTimersByTime(5000);
+
+      // Wait for async operations
+      await vi.runAllTimersAsync();
+
+      const channel = await mockConnection.createConfirmChannel();
+      // Consume should be called again (initial + reconnect)
+      expect(channel.consume).toHaveBeenCalledTimes(2);
+
+      vi.useRealTimers();
     });
   });
 });

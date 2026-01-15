@@ -135,6 +135,9 @@ export class Subscriber {
   private running = false;
   private generatedQueueName?: string;
   private messageParser: MessageParser;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectTimer: NodeJS.Timeout | null = null;
 
   /**
    * Create a new Subscriber instance
@@ -290,6 +293,44 @@ export class Subscriber {
   }
 
   /**
+   * Schedule consumer reconnection after cancellation
+   */
+  private async scheduleConsumerReconnect(): Promise<void> {
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    this.reconnectAttempts++;
+
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      this.config.logger.error('Max consumer reconnection attempts reached');
+      return;
+    }
+
+    const baseDelay = 5000;
+    const exponentialDelay = baseDelay * Math.pow(2, this.reconnectAttempts - 1);
+    const delay = Math.min(exponentialDelay, 60000);
+
+    this.config.logger.info(
+      `Scheduling consumer reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`,
+      {
+        delay,
+      }
+    );
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      try {
+        await this.reRegisterConsumer();
+        this.reconnectAttempts = 0;
+      } catch (error) {
+        this.config.logger.error('Failed to reconnect consumer', error as Error);
+        await this.scheduleConsumerReconnect();
+      }
+    }, delay);
+  }
+
+  /**
    * Stop consuming and cleanup
    *
    * Stops consuming messages and closes the channel.
@@ -298,6 +339,12 @@ export class Subscriber {
   async stop(): Promise<void> {
     if (!this.running) {
       return;
+    }
+
+    // Clear reconnect timer if exists
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     if (this.channel && this.consumerTag) {
@@ -411,7 +458,11 @@ export class Subscriber {
    * Process incoming message and dispatch to matching handlers
    */
   private async handleMessage(msg: ConsumeMessage | null): Promise<void> {
+    // if message is null, the consumer was cancelled
     if (!msg) {
+      this.config.logger.warn('Consumer cancelled by server, attempting to re-register');
+      this.running = false;
+      await this.scheduleConsumerReconnect();
       return;
     }
 

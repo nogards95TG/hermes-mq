@@ -479,4 +479,57 @@ describe('Subscriber', () => {
       expect(mockChannel.nack).toHaveBeenCalledWith(message, false, false);
     });
   });
+
+  describe('consumer cancellation', () => {
+    beforeEach(() => {
+      subscriber = new Subscriber({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+      });
+
+      // Register at least one handler
+      subscriber.on('test.event', vi.fn());
+    });
+
+    it('should handle consumer cancellation gracefully', async () => {
+      await subscriber.start();
+      expect(subscriber.isRunning()).toBe(true);
+
+      // Get the consume callback
+      const consumeCall = mockChannel.consume.mock.calls[0];
+      const consumeCallback = consumeCall[1];
+
+      // Simulate consumer cancellation (msg = null)
+      await consumeCallback(null);
+
+      expect(subscriber.isRunning()).toBe(false);
+    });
+
+    it('should attempt to reconnect after cancellation', async () => {
+      vi.useFakeTimers();
+
+      await subscriber.start();
+
+      const consumeCall = mockChannel.consume.mock.calls[0];
+      const consumeCallback = consumeCall[1];
+
+      // Simulate consumer cancellation
+      await consumeCallback(null);
+
+      expect(subscriber.isRunning()).toBe(false);
+
+      // Fast-forward time to trigger reconnection
+      vi.advanceTimersByTime(5000);
+
+      // Wait for async operations
+      await vi.runAllTimersAsync();
+
+      // Consume should be called again (initial + reconnect)
+      expect(mockChannel.consume).toHaveBeenCalledTimes(2);
+
+      vi.useRealTimers();
+    });
+  });
 });

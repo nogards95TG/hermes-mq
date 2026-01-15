@@ -44,7 +44,7 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
  * Default RPC server configuration
  */
 const DEFAULT_CONFIG = {
-  prefetch: 1,
+  prefetch: 10, // RabbitMQ recommends a value between 10-50 to balance throughput and fairness
   assertQueue: true,
   queueOptions: {
     durable: true,
@@ -102,6 +102,9 @@ export class RpcServer {
   private inFlightMessages = new Set<string>();
   private messageParser: MessageParser;
   private deduplicator: MessageDeduplicator;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectTimer: NodeJS.Timeout | null = null;
 
   /**
    * Create a new RPC server instance
@@ -284,7 +287,14 @@ export class RpcServer {
    * Handle incoming request
    */
   private async handleRequest(msg: amqp.ConsumeMessage | null): Promise<void> {
-    if (!msg || !this.channel) return;
+    if (!msg) {
+      this.logger.warn('Consumer cancelled by server, attempting to re-register');
+      this.isRunning = false;
+      await this.scheduleConsumerReconnect();
+      return;
+    }
+
+    if (!this.channel) return;
 
     const correlationId = msg.properties.correlationId;
     const replyTo = msg.properties.replyTo;
@@ -505,6 +515,44 @@ export class RpcServer {
   }
 
   /**
+   * Schedule consumer reconnection after cancellation
+   */
+  private async scheduleConsumerReconnect(): Promise<void> {
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    this.reconnectAttempts++;
+
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      this.logger.error('Max consumer reconnection attempts reached');
+      return;
+    }
+
+    const baseDelay = 5000;
+    const exponentialDelay = baseDelay * Math.pow(2, this.reconnectAttempts - 1);
+    const delay = Math.min(exponentialDelay, 60000);
+
+    this.logger.info(
+      `Scheduling consumer reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`,
+      {
+        delay,
+      }
+    );
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      try {
+        await this.reRegisterConsumer();
+        this.reconnectAttempts = 0;
+      } catch (error) {
+        this.logger.error('Failed to reconnect consumer', error as Error);
+        await this.scheduleConsumerReconnect();
+      }
+    }, delay);
+  }
+
+  /**
    * Check if server is running
    *
    * @returns true if server is actively listening for requests
@@ -537,6 +585,12 @@ export class RpcServer {
     }
 
     try {
+      // Clear reconnect timer if exists
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+
       // Stop consuming new messages
       if (this.consumerTag && this.channel) {
         try {
