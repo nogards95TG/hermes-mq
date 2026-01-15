@@ -68,7 +68,7 @@ import { RpcServer } from 'hermes-mq';
 const server = new RpcServer({
   connection: { url: 'amqp://localhost' },
   queueName: 'users',
-  // prefetch defaults to 10 (RabbitMQ best practice)
+  prefetch: 15, // defaults to 10 (RabbitMQ best practice)
 });
 
 server
@@ -203,19 +203,6 @@ const server = new RpcServer({
 Prevent reprocessing of duplicate messages using LRU cache.
 
 > **⚠️ Important:** Deduplication is **disabled by default** to minimize overhead. Enable it only if your handlers are **not idempotent**.
-
-**When to enable deduplication:**
-
-- ✅ Payment processing
-- ✅ Email or notification sending
-- ✅ External API calls with side effects
-- ✅ Database writes that aren't idempotent
-
-**When deduplication is NOT needed:**
-
-- ❌ Read-only operations
-- ❌ Idempotent handlers (can safely retry)
-- ❌ Handlers that use database unique constraints
 
 **Example configuration:**
 

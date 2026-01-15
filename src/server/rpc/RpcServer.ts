@@ -287,6 +287,7 @@ export class RpcServer {
    * Handle incoming request
    */
   private async handleRequest(msg: amqp.ConsumeMessage | null): Promise<void> {
+    // if message is null, the consumer was cancelled
     if (!msg) {
       this.logger.warn('Consumer cancelled by server, attempting to re-register');
       this.isRunning = false;
