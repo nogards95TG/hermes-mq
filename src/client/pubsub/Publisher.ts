@@ -11,6 +11,17 @@ import {
   type RetryConfig,
 } from '../../core';
 
+interface ExchangeOptions {
+  name: string;
+  type?: 'topic' | 'fanout' | 'direct';
+  options?: {
+    durable?: boolean;
+    autoDelete?: boolean;
+    internal?: boolean;
+    arguments?: Record<string, unknown>;
+  };
+}
+
 /**
  * Publisher configuration
  */
@@ -22,16 +33,7 @@ export interface PublisherConfig {
     maxReconnectAttempts?: number;
     heartbeat?: number;
   };
-  exchanges?: Array<{
-    name: string;
-    type?: 'topic' | 'fanout' | 'direct';
-    options?: {
-      durable?: boolean;
-      autoDelete?: boolean;
-      internal?: boolean;
-      arguments?: Record<string, unknown>;
-    };
-  }>;
+  exchanges?: ExchangeOptions[];
   exchange?: string;
   exchangeType?: 'topic' | 'fanout' | 'direct';
   defaultExchange?: string;
@@ -43,6 +45,7 @@ export interface PublisherConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+  delayedExchange?: string;
 }
 
 /**
@@ -62,16 +65,22 @@ interface PublishOptions {
   persistent?: boolean;
   mandatory?: boolean;
   metadata?: Record<string, any>;
+  delay?: number;
+  scheduledAt?: Date | number;
 }
 
 type RequiredPublisherConfig = Required<
-  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
+  Omit<
+    PublisherConfig,
+    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode' | 'delayedExchange'
+  >
 > & {
   exchanges?: PublisherConfig['exchanges'];
   exchange?: string;
   exchangeType?: 'topic' | 'fanout' | 'direct';
   onReturn?: (msg: ReturnedMessage) => void;
   confirmMode?: 'sync' | 'async';
+  delayedExchange?: string;
 };
 
 /**
@@ -129,6 +138,7 @@ export class Publisher {
       retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
+      delayedExchange: config.delayedExchange,
     };
 
     this.connectionManager = ConnectionManager.getInstance({
@@ -190,6 +200,24 @@ export class Publisher {
       throw new ValidationError('Event name must be a non-empty string', {});
     }
 
+    // Calculate delay if scheduledAt or delay is provided
+    let delayMs = 0;
+    if (options.delay !== undefined) {
+      delayMs = options.delay;
+    } else if (options.scheduledAt !== undefined) {
+      const scheduledTime =
+        typeof options.scheduledAt === 'number'
+          ? options.scheduledAt
+          : options.scheduledAt.getTime();
+      delayMs = Math.max(0, scheduledTime - Date.now());
+    }
+
+    // If delay is requested, use delayed publish
+    if (delayMs > 0) {
+      return this.publishDelayed(eventName, data, delayMs, options);
+    }
+
+    // Immediate publish
     const channel = await this.ensureChannel();
     const exchange = options.exchange ?? this.config.defaultExchange;
     const routingKey = options.routingKey ?? eventName;
@@ -250,6 +278,117 @@ export class Publisher {
       await this.publishWithRetry(publishOperation);
     } else {
       await publishOperation();
+    }
+  }
+
+  /**
+   * Publish a delayed message using TTL + Dead Letter Exchange
+   *
+   * Creates a temporary queue with TTL that forwards to the target exchange after delay.
+   *
+   * **Important**: Each delayed message creates a temporary queue. For high-volume scenarios
+   * with many concurrent delayed messages, consider using the RabbitMQ delayed message plugin
+   * (see ROADMAP.md) or implementing application-level scheduling.
+   *
+   * @param eventName - The event name
+   * @param data - The event payload
+   * @param delayMs - Delay in milliseconds (max: 24 hours)
+   * @param options - Publishing options
+   * @throws {ValidationError} When delay exceeds maximum allowed
+   */
+  private async publishDelayed<T = any>(
+    eventName: string,
+    data: T,
+    delayMs: number,
+    options: PublishOptions = {}
+  ): Promise<void> {
+    // Safety: Limit maximum delay to 24 hours to prevent resource exhaustion
+    const MAX_DELAY_MS = 86400000; // 24 hours
+    if (delayMs > MAX_DELAY_MS) {
+      throw new ValidationError(
+        `Delay cannot exceed 24 hours (${MAX_DELAY_MS}ms). Got: ${delayMs}ms. ` +
+          'For longer delays, consider application-level scheduling.',
+        { delayMs, maxDelayMs: MAX_DELAY_MS }
+      );
+    }
+
+    const channel = await this.ensureChannel();
+    const targetExchange = options.exchange ?? this.config.defaultExchange;
+    const targetRoutingKey = options.routingKey ?? eventName;
+    const persistent = options.persistent ?? this.config.persistent;
+
+    // Create unique temporary delay queue name
+    const delayQueueName = `hermes.delay.${delayMs}.${randomUUID()}`;
+
+    // Warn for long delays (>1 hour) as they create long-lived queues
+    if (delayMs > 3600000) {
+      this.config.logger.warn(
+        `Creating delayed message with ${Math.round(delayMs / 3600000)}h delay. ` +
+          'This creates a temporary queue that will persist until delivery. ' +
+          'Consider application-level scheduling for delays >1 hour.',
+        { delayMs, eventName }
+      );
+    }
+
+    try {
+      // Assert the delay queue with TTL and DLX
+      await channel.assertQueue(delayQueueName, {
+        durable: false,
+        autoDelete: true,
+        expires: delayMs + 60000, // Queue expires 1 minute after delay (cleanup)
+        arguments: {
+          'x-message-ttl': delayMs, // Messages expire after delay
+          'x-dead-letter-exchange': targetExchange, // Forward to target exchange
+          'x-dead-letter-routing-key': targetRoutingKey, // With target routing key
+        },
+      });
+
+      const messageId = randomUUID();
+      const timestamp = Date.now();
+
+      const envelope = {
+        eventName,
+        data,
+        timestamp,
+        metadata: {
+          ...options.metadata,
+          delayedUntil: timestamp + delayMs,
+          originalDelay: delayMs,
+        },
+      };
+
+      const payload = this.config.serializer.encode(envelope);
+
+      // Publish to delay queue
+      const published = channel.sendToQueue(delayQueueName, payload, {
+        persistent,
+        contentType: 'application/json',
+        timestamp,
+        messageId,
+      });
+
+      // Handle backpressure
+      if (!published) {
+        this.config.logger.debug('Channel buffer full, waiting for drain...');
+        await new Promise<void>((resolve) => channel.once('drain', resolve));
+      }
+
+      // Wait for broker confirmation if enabled
+      if (this.config.publisherConfirms && this.config.confirmMode === 'sync') {
+        await (channel as any).waitForConfirms();
+      }
+
+      this.config.logger.debug(
+        `Scheduled delayed event "${eventName}" to ${targetExchange}/${targetRoutingKey}`,
+        {
+          messageId,
+          delayMs,
+          deliveryTime: new Date(timestamp + delayMs).toISOString(),
+        }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new HermesError(`Failed to publish delayed event: ${message}`, 'PUBLISH_ERROR');
     }
   }
 

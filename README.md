@@ -22,6 +22,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🧹 **Memory Safe**: Automatic cleanup of expired RPC callbacks
 - 🔁 **Auto Recovery**: Consumer re-registration on server cancellation
 - 🚦 **Flow Control**: Built-in backpressure handling
+- ⏰ **Delayed Messages**: Schedule messages for future delivery (TTL+DLX)
 - ⏱️ **TTL & Limits**: Queue message expiration and size limits
 - 🛡️ **Best Practices**: Following RabbitMQ production recommendations
 
@@ -392,7 +393,86 @@ Automatic channel backpressure handling:
 // - Buffers pending writes internally
 ```
 
-### 13. Queue Limits & TTL (v1.0+)
+### 13. Delayed & Scheduled Messages (v1.1+)
+
+Schedule messages for future delivery using TTL + Dead Letter Exchange:
+
+```typescript
+const publisher = new Publisher({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+});
+
+// Delay by milliseconds
+await publisher.publish(
+  'reminder',
+  { userId: '123' },
+  {
+    delay: 3600000, // Deliver after 1 hour
+  }
+);
+
+// Schedule at specific time
+await publisher.publish('daily-report', reportData, {
+  scheduledAt: new Date('2025-01-15T09:00:00Z'),
+});
+
+// Schedule using timestamp
+await publisher.publish('alert', alertData, {
+  scheduledAt: Date.now() + 60000, // 1 minute from now
+});
+```
+
+**How it works:**
+
+- Creates temporary delay queue with message TTL
+- After TTL expires, message is forwarded to target exchange via DLX
+- Automatic cleanup of temporary queues
+- No plugin required - works with any RabbitMQ version
+
+**Use cases:**
+
+- Reminder notifications (minutes/hours)
+- Scheduled reports (daily/weekly)
+- Delayed retries (seconds/minutes)
+- Time-based workflows
+- Rate limiting
+
+**⚠️ Important Limitations:**
+
+- **Max delay**: 24 hours (enforced by library)
+- **Resource usage**: Each delayed message creates a temporary queue
+- **Not for high volume**: Avoid 1000s of concurrent delayed messages
+- **Better alternatives for**:
+  - Delays >24 hours → Use application-level scheduler (cron, Bull, Agenda)
+  - High-volume delays → Use RabbitMQ delayed message plugin (see ROADMAP.md)
+  - Precise timing <1s → Use plugin or external scheduler
+
+**Best practices:**
+
+```typescript
+// ✅ Good: Short delays, low volume
+await publisher.publish('reminder', data, { delay: 300000 }); // 5 minutes
+
+// ✅ Good: Scheduled for near future
+await publisher.publish('report', data, {
+  scheduledAt: new Date(Date.now() + 3600000) // 1 hour
+});
+
+// ⚠️ Avoid: Very long delays
+await publisher.publish('renewal', data, { delay: 86400000 * 30 }); // 30 days - ERROR!
+// Use cron/scheduler instead
+
+// ⚠️ Avoid: High volume of concurrent delayed messages
+for (let i = 0; i < 10000; i++) {
+  await publisher.publish(`event-${i}`, data, { delay: 60000 }); // Creates 10k queues!
+}
+// Use batching or plugin instead
+```
+
+**Note**: Delayed messages are **only available for Pub/Sub Publisher**, not for RPC. RPC is synchronous by design (client waits for response), making delays incompatible with the pattern. Use Pub/Sub for scheduled/delayed workflows.
+
+### 14. Queue Limits & TTL (v1.0+)
 
 Configure message expiration and queue size:
 
@@ -405,7 +485,7 @@ await connectionManager.assertQueue('my-queue', {
 });
 ```
 
-### 14. Enhanced Connection Recovery (v1.0+)
+### 15. Enhanced Connection Recovery (v1.0+)
 
 Exponential backoff with heartbeat monitoring:
 

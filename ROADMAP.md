@@ -22,6 +22,7 @@ This document tracks potential future enhancements for Hermes MQ. These are **no
 Quorum queues are RabbitMQ's modern replicated queue type, offering better data safety and availability compared to classic durable queues.
 
 **Benefits**:
+
 - Automatic replication across cluster nodes
 - Better consistency guarantees (Raft consensus)
 - Poison message handling
@@ -48,6 +49,7 @@ await manager.assertQueue('critical-queue', {
 ```
 
 **Files to modify**:
+
 - `src/core/connection/ConnectionManager.ts` - Add `queueType` to interface and conversion logic
 - `src/core/types/Messages.ts` - Update type definitions
 - `README.md` - Document new feature with examples
@@ -66,6 +68,7 @@ await manager.assertQueue('critical-queue', {
 Ensures only one consumer processes messages from a queue at a time, guaranteeing message ordering even with multiple consumer instances.
 
 **Benefits**:
+
 - Strict message ordering
 - Automatic failover to standby consumers
 - No need for manual consumer coordination
@@ -87,11 +90,13 @@ await manager.assertQueue('ordered-events', {
 ```
 
 **Use Cases**:
+
 - Order processing systems requiring strict sequencing
 - Event sourcing where order matters
 - State machine transitions
 
 **Files to modify**:
+
 - `src/core/connection/ConnectionManager.ts`
 - `README.md`
 
@@ -109,11 +114,13 @@ await manager.assertQueue('ordered-events', {
 Lazy queues move messages to disk as early as possible, keeping only a small subset in RAM. Ideal for very long queues.
 
 **Benefits**:
+
 - Lower memory consumption
 - Better handling of message spikes
 - Predictable performance with large backlogs
 
 **Trade-offs**:
+
 - Slightly higher latency
 - More disk I/O
 
@@ -135,11 +142,13 @@ await manager.assertQueue('analytics-events', {
 ```
 
 **Use Cases**:
+
 - Analytics event queues with high ingestion rates
 - Batch processing systems
 - Queues that buffer data for offline processing
 
 **Files to modify**:
+
 - `src/core/connection/ConnectionManager.ts`
 - `README.md`
 
@@ -157,6 +166,7 @@ await manager.assertQueue('analytics-events', {
 An alternate exchange receives messages that cannot be routed to any queue, providing a declarative alternative to the `mandatory` flag.
 
 **Benefits**:
+
 - Declarative configuration (set once at queue creation)
 - No need for per-message `mandatory` flag
 - Can route to DLQ, logging queue, or alert queue
@@ -183,11 +193,13 @@ await manager.bindQueue('unroutable-orders-queue', 'unroutable-orders', '');
 ```
 
 **Use Cases**:
+
 - Monitoring and alerting on routing failures
 - Debugging message routing issues
 - Compliance/audit logging of all messages
 
 **Files to modify**:
+
 - `src/core/connection/ConnectionManager.ts`
 - `src/client/pubsub/Publisher.ts` - Add to exchange assertion options
 - `README.md`
@@ -206,6 +218,7 @@ await manager.bindQueue('unroutable-orders-queue', 'unroutable-orders', '');
 Assign priority to consumers on the same queue. Higher priority consumers receive messages first.
 
 **Benefits**:
+
 - Better resource utilization
 - Preferred consumers on powerful nodes
 - Fallback consumers on secondary nodes
@@ -234,11 +247,13 @@ const fallbackServer = new RpcServer({
 ```
 
 **Use Cases**:
+
 - Geographic distribution (prefer local consumers)
 - Resource-based routing (powerful vs weak nodes)
 - Testing in production (route small % to new version)
 
 **Files to modify**:
+
 - `src/server/rpc/RpcServer.ts`
 - `src/server/pubsub/Subscriber.ts`
 - `README.md`
@@ -276,19 +291,23 @@ For each feature, ensure:
 Consider implementing these if needed:
 
 ### Performance Optimizations
+
 - [ ] Channel pooling for Publisher (reuse channels across publishes)
 - [ ] Batch acknowledgments (ack multiple messages at once)
 - [ ] Message batching (publish multiple messages as one)
 
 ### Monitoring & Observability
+
 - [ ] Metrics export (Prometheus format)
 - [ ] Health check endpoints
 - [ ] Detailed connection/channel event logging
 
 ### Advanced Patterns
+
 - [ ] Request/reply with temporary reply queues per client
 - [ ] Priority queues (x-max-priority)
-- [ ] Message scheduling/delayed delivery
+- [x] Message scheduling/delayed delivery (TTL+DLX strategy)
+- [ ] RabbitMQ delayed message plugin support (for millisecond precision)
 - [ ] Consistent hash exchange
 
 **Last Updated**: 2026-01-15
