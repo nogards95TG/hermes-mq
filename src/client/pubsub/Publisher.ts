@@ -64,6 +64,18 @@ interface PublishOptions {
   metadata?: Record<string, any>;
 }
 
+/**
+ * Default publisher configuration
+ */
+const DEFAULT_CONFIG = {
+  exchangeType: 'topic' as const,
+  persistent: true,
+  publisherConfirms: true,
+  confirmMode: 'sync' as const,
+  mandatory: false,
+  retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
+};
+
 type RequiredPublisherConfig = Required<
   Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
 > & {
@@ -116,17 +128,10 @@ export class Publisher {
     }
 
     this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
       connection: config.connection,
-      exchanges: config.exchanges,
-      exchange: config.exchange,
-      exchangeType: config.exchangeType ?? 'topic',
       defaultExchange: config.defaultExchange ?? config.exchange ?? 'amq.topic',
-      persistent: config.persistent ?? true,
-      publisherConfirms: config.publisherConfirms ?? true,
-      confirmMode: config.confirmMode ?? 'sync',
-      mandatory: config.mandatory ?? false,
-      onReturn: config.onReturn,
-      retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
     };

@@ -90,6 +90,25 @@ interface HandlerRegistration<T = any> {
 }
 
 /**
+ * Default subscriber configuration
+ */
+const DEFAULT_CONFIG = {
+  exchangeType: 'topic' as const,
+  exchangeOptions: { durable: true },
+  queueOptions: { durable: true, exclusive: false, autoDelete: true },
+  prefetch: 10,
+  retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
+  ackStrategy: { mode: 'auto' as const, requeue: true },
+  messageValidation: {
+    malformedMessageStrategy: 'dlq' as const,
+  },
+  errorHandling: {
+    isolateErrors: false,
+    continueOnError: false,
+  },
+};
+
+/**
  * Subscriber for Pub/Sub pattern over RabbitMQ
  *
  * The Subscriber listens for events on an exchange and routes them to registered handlers
@@ -155,25 +174,12 @@ export class Subscriber {
     }
 
     this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
       connection: config.connection,
       exchange: config.exchange,
-      exchangeType: config.exchangeType ?? 'topic',
-      exchangeOptions: config.exchangeOptions ?? { durable: true },
-      queueName: config.queueName,
-      queueOptions: config.queueOptions ?? { durable: true, exclusive: false, autoDelete: true },
-      prefetch: config.prefetch ?? 10,
-      retry: config.retry ?? { enabled: true, maxAttempts: 3, initialDelay: 1000 },
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
-      handlerTimeout: config.handlerTimeout,
-      ackStrategy: config.ackStrategy ?? { mode: 'auto', requeue: true },
-      messageValidation: config.messageValidation ?? {
-        malformedMessageStrategy: 'dlq',
-      },
-      errorHandling: config.errorHandling ?? {
-        isolateErrors: false,
-        continueOnError: false,
-      },
     } as any;
 
     this.messageParser = new MessageParser(this.config.messageValidation);
