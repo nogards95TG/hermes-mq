@@ -500,6 +500,10 @@ See [`.github/workflows/test.yml`](./.github/workflows/test.yml) for details.
 
 ---
 
+## 🗺️ Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned features and future enhancements, these are **optional features** for specific use cases.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please read our [Contributing Guide](./CONTRIBUTING.md) for details.
