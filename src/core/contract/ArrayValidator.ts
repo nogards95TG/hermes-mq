@@ -1,15 +1,5 @@
 import type { Validator, ValidationResult, ValidationError as ValidatorError } from './Validator';
-
-/**
- * Any validator - accepts any value
- */
-class AnyValidator implements Validator<any> {
-  readonly _type!: any;
-  
-  validate(value: unknown): ValidationResult<any> {
-    return { success: true, data: value };
-  }
-}
+import { AnyValidator } from './AnyValidator';
 
 /**
  * Array validator with optional item validation

@@ -226,6 +226,21 @@ v.number().integer(); // Integer only
 v.number().positive(); // > 0
 v.number().negative(); // < 0
 
+// Boolean validators
+v.boolean(); // Required boolean
+v.boolean().optional(); // Optional boolean
+
+// Date validators
+v.date(); // Required date (Date, ISO string, or timestamp)
+v.date().optional(); // Optional date
+v.date().min(new Date('2024-01-01')); // Date after specified
+v.date().max(new Date()); // Date before specified
+v.date().strict(); // Only accept Date objects
+
+// Any validator
+v.any(); // Accepts any value
+v.any().optional(); // Optional any value
+
 // Object validators
 v.object(); // Any object (no field validation)
 v.object({
@@ -247,16 +262,31 @@ v.array(
   })
 );
 
+// Custom validator
+v.custom<T>((value) => {
+  // Your custom validation logic
+  if (/* validation fails */) {
+    return {
+      success: false,
+      errors: [{ path: [], message: 'Error message' }],
+    };
+  }
+  return { success: true, data: value };
+});
+
 // Nested structures
 v.object({
   user: v.object({
     profile: v.object({
       name: v.string(),
+      birthDate: v.date().optional(),
     }),
   }),
   tags: v.array(v.string()),
+  active: v.boolean(),
   metadata: v.array().optional(), // Flexible metadata
   context: v.object().optional(), // Flexible context
+  customData: v.any().optional(), // Accepts anything
 });
 ```
 

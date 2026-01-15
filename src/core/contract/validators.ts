@@ -19,7 +19,10 @@ import { StringValidator } from './StringValidator';
 import { NumberValidator } from './NumberValidator';
 import { ObjectValidator } from './ObjectValidator';
 import { ArrayValidator } from './ArrayValidator';
-import type { Validator } from './Validator';
+import { BooleanValidator } from './BooleanValidator';
+import { DateValidator } from './DateValidator';
+import { AnyValidator } from './AnyValidator';
+import type { Validator, ValidationResult } from './Validator';
 
 export const v = {
   /**
@@ -53,6 +56,43 @@ export const v = {
   number: () => new NumberValidator(true),
 
   /**
+   * Create a boolean validator
+   *
+   * @example
+   * ```typescript
+   * v.boolean() // required boolean
+   * v.boolean().optional() // optional boolean
+   * ```
+   */
+  boolean: () => new BooleanValidator(true),
+
+  /**
+   * Create a date validator
+   *
+   * @example
+   * ```typescript
+   * v.date() // required date (accepts Date, ISO string, timestamp)
+   * v.date().optional() // optional date
+   * v.date().min(new Date('2024-01-01')) // date after 2024-01-01
+   * v.date().max(new Date()) // date before now
+   * v.date().strict() // only accept Date objects, not strings
+   * ```
+   */
+  date: () => new DateValidator(true),
+
+  /**
+   * Create an any validator (accepts any value)
+   *
+   * @example
+   * ```typescript
+   * v.any() // accepts any value
+   * v.any().optional() // optional any value
+   * ```
+   */
+  any: () => new AnyValidator(true),
+
+  /**
+   * Create an 
    * Create an object validator
    *
    * @example
@@ -82,9 +122,32 @@ export const v = {
    */
   array: <TItem extends Validator>(itemValidator?: TItem) =>
     new ArrayValidator(itemValidator, true),
+
+  /**
+   * Create a custom validator with user-defined validation logic
+   *
+   * @example
+   * ```typescript
+   * v.custom<string>((value) => {
+   *   if (typeof value !== 'string') {
+   *     return { success: false, errors: [{ path: [], message: 'Expected string' }] };
+   *   }
+   *   if (!value.startsWith('PREFIX_')) {
+   *     return { success: false, errors: [{ path: [], message: 'Must start with PREFIX_' }] };
+   *   }
+   *   return { success: true, data: value };
+   * }), EnumValidator
+   * ```
+   */
+  custom: <T>(
+    validateFn: (value: unknown) => ValidationResult<T>
+  ): Validator<T> => ({
+    _type: undefined as any,
+    validate: validateFn,
+  }),
 };
 
 // Re-export types
 export type { Validator } from './Validator';
-export type { StringValidator, NumberValidator, ObjectValidator, ArrayValidator };
+export type { StringValidator, NumberValidator, ObjectValidator, ArrayValidator, BooleanValidator, DateValidator, AnyValidator };
 export type Infer<T> = T extends { validate: (value: unknown) => { data?: infer U } } ? U : never;

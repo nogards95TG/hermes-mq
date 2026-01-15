@@ -71,6 +71,26 @@ export { v } from './core/contract/validators';
 export { createContractServer } from './server/rpc/ContractRpcServer';
 export { createContractClient } from './client/rpc/ContractRpcClient';
 
-export type { Contract, CommandDefinition, InferRequest, InferResponse } from './core/contract/Contract';
-export type { Validator, ValidationResult, ValidationError as ContractValidationError, Infer } from './core/contract/Validator';
-export type { StringValidator, NumberValidator, ObjectValidator, ArrayValidator } from './core/contract/validators';
+export type {
+  Contract,
+  CommandDefinition,
+  InferRequest,
+  InferResponse,
+} from './core/contract/Contract';
+
+export type {
+  Validator,
+  ValidationResult,
+  ValidationError as ContractValidationError,
+  Infer,
+} from './core/contract/Validator';
+
+export type {
+  StringValidator,
+  NumberValidator,
+  BooleanValidator,
+  DateValidator,
+  AnyValidator,
+  ObjectValidator,
+  ArrayValidator,
+} from './core/contract/validators';

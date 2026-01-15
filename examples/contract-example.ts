@@ -25,6 +25,7 @@ async function main() {
   // Step 2: Create server with type-safe handlers
   const server = createContractServer(usersContract, {
     connection: { url: 'amqp://localhost' },
+    validate: false,
   });
 
   // ✅ Autocomplete on command names!

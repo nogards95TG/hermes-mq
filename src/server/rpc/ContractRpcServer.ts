@@ -34,8 +34,16 @@ type HandlerFunction<TCommandDef> = (
  *   },
  * });
  *
+ * // With runtime validation (default)
  * const server = createContractServer(contract, {
  *   connection: { url: 'amqp://localhost' },
+ *   validate: true, // default: true
+ * });
+ *
+ * // TypeScript autocomplete only (skip validation for performance)
+ * const fastServer = createContractServer(contract, {
+ *   connection: { url: 'amqp://localhost' },
+ *   validate: false, // zero overhead, only TypeScript types
  * });
  *
  * // Full type safety and autocomplete!
@@ -50,12 +58,14 @@ type HandlerFunction<TCommandDef> = (
 export class ContractRpcServer<TContract extends Contract> {
   private server: RpcServer;
   private contract: TContract;
+  private enableValidation: boolean;
 
   constructor(
     contract: TContract,
-    config: Omit<RpcServerConfig, 'queueName'> & { queueName?: string }
+    config: Omit<RpcServerConfig, 'queueName'> & { queueName?: string; validate?: boolean }
   ) {
     this.contract = contract;
+    this.enableValidation = config.validate ?? true; // Default: true (validate)
     this.server = new RpcServer({
       ...config,
       queueName: config.queueName || contract.serviceName,
@@ -83,20 +93,25 @@ export class ContractRpcServer<TContract extends Contract> {
   ): this {
     const commandDef = this.contract.commands[command];
 
-    // Wrap handler with validation
+    // Wrap handler with validation (if enabled)
     this.server.registerHandler(command, async (data, metadata) => {
-      // Validate request
-      const requestResult = commandDef.req.validate(data);
+      let validatedData: any = data;
 
-      if (!requestResult.success) {
-        throw new ValidationError(`Invalid request for ${command}`, {
-          command,
-          errors: requestResult.errors,
-        });
+      // Validate request (if validation is enabled)
+      if (this.enableValidation) {
+        const requestResult = commandDef.req.validate(data);
+
+        if (!requestResult.success) {
+          throw new ValidationError(`Invalid request for ${command}`, {
+            command,
+            errors: requestResult.errors,
+          });
+        }
+        validatedData = requestResult.data!;
       }
 
-      // Execute handler with validated data
-      const result = await handler(requestResult.data!, metadata);
+      // Execute handler with validated (or raw) data
+      const result = await handler(validatedData, metadata);
 
       // Response validation is skipped - TypeScript ensures type correctness
       // Runtime validation would expose internal errors to clients
@@ -143,17 +158,27 @@ export class ContractRpcServer<TContract extends Contract> {
  * Factory function to create a contract-based RPC server
  *
  * @param contract - Service contract definition
- * @param config - Server configuration (queueName is optional, defaults to contract.serviceName)
+ * @param config - Server configuration
+ * @param config.validate - Enable runtime validation (default: true). Set to false for TypeScript-only type checking with zero overhead
+ * @param config.queueName - Queue name (optional, defaults to contract.serviceName)
  * @returns Type-safe RPC server instance
  *
  * @example
  * ```typescript
+ * // With validation (recommended for production)
  * const server = createContractServer(usersContract, {
  *   connection: { url: 'amqp://localhost' },
+ *   validate: true, // default
+ * });
+ *
+ * // Without validation (maximum performance, TypeScript only)
+ * const fastServer = createContractServer(usersContract, {
+ *   connection: { url: 'amqp://localhost' },
+ *   validate: false,
  * });
  * ```
  */
 export const createContractServer = <TContract extends Contract>(
   contract: TContract,
-  config: Omit<RpcServerConfig, 'queueName'> & { queueName?: string }
+  config: Omit<RpcServerConfig, 'queueName'> & { queueName?: string; validate?: boolean }
 ): ContractRpcServer<TContract> => new ContractRpcServer(contract, config);
