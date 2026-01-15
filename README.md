@@ -10,9 +10,11 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 ## ✨ Features
 
 - 🎯 **Type-Safe**: Full TypeScript support with generics
+- � **Contract-Based**: Define contracts once with automatic validation and type inference
 - 🔌 **Connection Pooling**: Automatic channel reuse and health checks
 - 🔄 **Auto Reconnection**: Exponential backoff retry logic with circuit breaker
 - 🎭 **Dual Patterns**: Both RPC (request/response) and Pub/Sub (events)
+- ✅ **Built-in Validators**: Most common validators with chainable API
 - 📝 **Flexible Logging**: Pluggable logger interface (Winston, Pino, etc.)
 - 🧪 **Testable**: Mock implementations and Testcontainers support
 - 🚀 **Production Ready**: Graceful shutdown, error handling, monitoring
@@ -100,6 +102,172 @@ const user = await client.send<{ id: string }, User>('GET_USER', { id: '123' });
 
 console.log(user);
 ```
+
+### Contract-Based RPC (Type-Safe with Validation)
+
+Define contracts once, get full type safety and automatic validation on both client and server.
+
+**Define Contract:**
+
+```typescript
+import { defineContract, v } from 'hermes-mq';
+
+const usersContract = defineContract({
+  serviceName: 'users',
+  commands: {
+    GET_USER: {
+      req: v.object({
+        id: v.string().uuid(),
+      }),
+      res: v.object({
+        id: v.string().uuid(),
+        name: v.string().min(2),
+        email: v.string().email(),
+        age: v.number().min(0).optional(),
+      }),
+    },
+    CREATE_USER: {
+      req: v.object({
+        name: v.string().min(2).max(50),
+        email: v.string().email(),
+        age: v.number().min(0).max(150).optional(),
+      }),
+      res: v.object({
+        id: v.string().uuid(),
+        name: v.string(),
+        email: v.string(),
+      }),
+    },
+  },
+});
+```
+
+**Server (with automatic validation):**
+
+```typescript
+import { createContractServer } from 'hermes-mq';
+
+const server = createContractServer(usersContract, {
+  connection: { url: 'amqp://localhost' },
+});
+
+// ✅ Full type inference and autocomplete
+server.registerHandler('GET_USER', async (request) => {
+  // request.id is typed as string (UUID validated)
+  const user = await db.users.findById(request.id);
+
+  // Return type is checked at compile time
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    age: user.age,
+  };
+});
+
+server.registerHandler('CREATE_USER', async (request) => {
+  // request is validated automatically before this handler runs
+  // request.name: string (min 2, max 50)
+  // request.email: string (email format)
+  // request.age?: number (0-150)
+
+  const user = await db.users.create(request);
+  return { id: user.id, name: user.name, email: user.email };
+});
+
+await server.start();
+```
+
+**Client (with automatic validation):**
+
+```typescript
+import { createContractClient } from 'hermes-mq';
+
+const client = createContractClient(usersContract, {
+  connection: { url: 'amqp://localhost' },
+});
+
+// ✅ Full type safety and autocomplete
+const user = await client.send('GET_USER', {
+  id: '550e8400-e29b-41d4-a716-446655440000',
+});
+// user is typed: { id: string, name: string, email: string, age?: number }
+
+const newUser = await client.send('CREATE_USER', {
+  name: 'John Doe',
+  email: 'john@example.com',
+  age: 30,
+});
+
+// ❌ This would fail validation at runtime (and TypeScript compilation)
+// await client.send('GET_USER', { id: 'not-a-uuid' });
+// await client.send('CREATE_USER', { name: 'J', email: 'invalid' });
+```
+
+**Available Validators:**
+
+```typescript
+import { v } from 'hermes-mq';
+
+// String validators
+v.string(); // Required string
+v.string().optional(); // Optional string
+v.string().min(2).max(100); // Length constraints
+v.string().email(); // Email format
+v.string().uuid(); // UUID format
+v.string().mongoId(); // MongoDB ObjectId format
+v.string().pattern(/regex/); // Custom regex
+
+// Number validators
+v.number(); // Required number
+v.number().optional(); // Optional number
+v.number().min(0).max(100); // Range constraints
+v.number().integer(); // Integer only
+v.number().positive(); // > 0
+v.number().negative(); // < 0
+
+// Object validators
+v.object(); // Any object (no field validation)
+v.object({
+  name: v.string(),
+  age: v.number().optional(),
+});
+v.object().optional(); // Optional generic object
+
+// Array validators
+v.array(); // Any array (no item validation)
+v.array(v.string()); // Array of strings
+v.array(v.number()).min(1); // Array with size constraints
+v.array().optional(); // Optional array (any type)
+v.array(
+  v.object({
+    // Array of objects
+    id: v.string(),
+    name: v.string(),
+  })
+);
+
+// Nested structures
+v.object({
+  user: v.object({
+    profile: v.object({
+      name: v.string(),
+    }),
+  }),
+  tags: v.array(v.string()),
+  metadata: v.array().optional(), // Flexible metadata
+  context: v.object().optional(), // Flexible context
+});
+```
+
+**Benefits:**
+
+- ✅ **Type Safety**: Full TypeScript inference from contract to handlers
+- ✅ **Automatic Validation**: Requests validated before reaching handlers
+- ✅ **DRY Principle**: Define contract once, use everywhere
+- ✅ **Developer Experience**: Autocomplete for command names and request/response types
+- ✅ **Error Prevention**: Catch invalid data before processing
+- ✅ **No Runtime Response Validation**: Avoids leaking internal errors to clients
 
 ### Pub/Sub Pattern (Events)
 
@@ -435,7 +603,7 @@ const server = new RpcServer({
   queueName: 'users',
   slowMessageDetection: {
     slowThresholds: {
-      warn: 1000,  // Log warning if handler takes > 1 second
+      warn: 1000, // Log warning if handler takes > 1 second
       error: 5000, // Log error if handler takes > 5 seconds
     },
     onSlowMessage: (context) => {
@@ -478,6 +646,7 @@ const subscriber = new Subscriber({
 ```
 
 **Use Cases:**
+
 - Performance monitoring and bottleneck detection
 - SLA enforcement and alerting
 - Identifying problematic handlers that need optimization

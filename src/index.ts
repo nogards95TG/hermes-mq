@@ -58,3 +58,19 @@ export type { RpcClientConfig, PublisherConfig } from './client';
  */
 export { RpcServer, Subscriber } from './server';
 export type { RpcServerConfig, SubscriberConfig, EventHandler } from './server';
+
+// ============================================================================
+// CONTRACT - Type-Safe RPC with Validation
+// ============================================================================
+
+/**
+ * Contract-based type-safe RPC with automatic validation
+ */
+export { defineContract } from './core/contract/Contract';
+export { v } from './core/contract/validators';
+export { createContractServer } from './server/rpc/ContractRpcServer';
+export { createContractClient } from './client/rpc/ContractRpcClient';
+
+export type { Contract, CommandDefinition, InferRequest, InferResponse } from './core/contract/Contract';
+export type { Validator, ValidationResult, ValidationError as ContractValidationError, Infer } from './core/contract/Validator';
+export type { StringValidator, NumberValidator, ObjectValidator, ArrayValidator } from './core/contract/validators';
