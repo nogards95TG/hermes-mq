@@ -72,6 +72,8 @@ export class ConnectionManager extends EventEmitter {
   private logger: Logger;
   private isClosed = false;
   private isClosing = false;
+  private connectedAt: Date | null = null;
+  private channelCount = 0;
 
   private constructor(config: ConnectionConfig) {
     super();
@@ -166,6 +168,7 @@ export class ConnectionManager extends EventEmitter {
       this.setupConnectionHandlers();
       this.reconnectAttempts = 0;
       this.isConnecting = false;
+      this.connectedAt = new Date();
 
       this.logger.info('Connected to RabbitMQ');
       this.emit('connected');
@@ -213,6 +216,7 @@ export class ConnectionManager extends EventEmitter {
     this.connection.on('close', () => {
       this.logger.warn('Connection closed');
       this.connection = null;
+      this.connectedAt = null;
       this.emit('disconnected');
 
       if (this.config.reconnect && !this.isClosed && !this.isClosing) {
@@ -263,6 +267,48 @@ export class ConnectionManager extends EventEmitter {
    */
   isConnected(): boolean {
     return this.connection !== null && !this.isConnecting;
+  }
+
+  /**
+   * Get connection status for health checks
+   *
+   * @returns Connection status information
+   */
+  getConnectionStatus(): {
+    connected: boolean;
+    connectedAt: Date | null;
+    url: string;
+  } {
+    return {
+      connected: this.isConnected(),
+      connectedAt: this.connectedAt,
+      url: this.maskUrl(this.config.url),
+    };
+  }
+
+  /**
+   * Get channel count
+   *
+   * @returns Number of active channels
+   */
+  getChannelCount(): number {
+    return this.channelCount;
+  }
+
+  /**
+   * Increment channel count (called when a channel is created)
+   * @internal
+   */
+  incrementChannelCount(): void {
+    this.channelCount++;
+  }
+
+  /**
+   * Decrement channel count (called when a channel is closed)
+   * @internal
+   */
+  decrementChannelCount(): void {
+    this.channelCount = Math.max(0, this.channelCount - 1);
   }
 
   /**

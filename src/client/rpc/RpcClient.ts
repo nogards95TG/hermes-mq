@@ -11,6 +11,7 @@ import {
   ResponseEnvelope,
   Serializer,
   JsonSerializer,
+  MetricsCollector,
 } from '../../core';
 
 /**
@@ -26,6 +27,12 @@ export interface RpcClientConfig {
   logger?: Logger;
   assertQueue?: boolean;
   queueOptions?: amqp.Options.AssertQueue;
+  /**
+   * Enable metrics collection using the global MetricsCollector instance.
+   * When enabled, metrics are automatically collected and aggregated with all other components.
+   * Default: false
+   */
+  enableMetrics?: boolean;
 }
 
 /**
@@ -47,14 +54,20 @@ const DEFAULT_CONFIG = {
   publisherConfirms: true,
   persistent: false,
   assertQueue: true,
+  enableMetrics: false,
   queueOptions: {
     durable: true,
   },
 };
 
+/**
+ * Required RPC client configuration with defaults applied
+ */
 type RequiredRpcClientConfig = Required<
   Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>
->;
+> & {
+  metrics?: MetricsCollector;
+};
 
 /**
  * RpcClient implements request/response pattern over RabbitMQ
@@ -96,7 +109,12 @@ export class RpcClient {
    * @param config - Client configuration including connection details and queue name
    */
   constructor(config: RpcClientConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
+      // Use global metrics if enabled
+      metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
+    };
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
@@ -226,6 +244,19 @@ export class RpcClient {
       // Setup timeout
       const timeoutHandle = setTimeout(() => {
         this.pendingRequests.delete(correlationId);
+
+        // Track timeout
+        if (this.config.metrics) {
+          this.config.metrics.incrementCounter(
+            'hermes_rpc_requests_total',
+            {
+              queue: this.config.queueName,
+              status: 'timeout',
+            },
+            1
+          );
+        }
+
         reject(
           new TimeoutError(`RPC request timeout after ${timeout}ms`, {
             command,
@@ -299,6 +330,9 @@ export class RpcClient {
       return;
     }
 
+    // Calculate duration
+    const duration = (Date.now() - pending.timestamp) / 1000; // Convert to seconds
+
     // Clear timeout and remove from pending
     clearTimeout(pending.timeout);
     this.pendingRequests.delete(correlationId);
@@ -307,14 +341,66 @@ export class RpcClient {
       const response: ResponseEnvelope = this.serializer.decode(msg.content);
 
       if (response.success) {
+        // Track successful RPC request
+        if (this.config.metrics) {
+          this.config.metrics.incrementCounter(
+            'hermes_rpc_requests_total',
+            {
+              queue: this.config.queueName,
+              status: 'success',
+            },
+            1
+          );
+          this.config.metrics.observeHistogram(
+            'hermes_rpc_request_duration_seconds',
+            {
+              queue: this.config.queueName,
+              status: 'success',
+            },
+            duration
+          );
+        }
+
         pending.resolve(response.data);
       } else {
+        // Track failed RPC request
+        if (this.config.metrics) {
+          this.config.metrics.incrementCounter(
+            'hermes_rpc_requests_total',
+            {
+              queue: this.config.queueName,
+              status: 'error',
+            },
+            1
+          );
+          this.config.metrics.observeHistogram(
+            'hermes_rpc_request_duration_seconds',
+            {
+              queue: this.config.queueName,
+              status: 'error',
+            },
+            duration
+          );
+        }
+
         const error = new Error(response.error?.message || 'Unknown error');
         error.name = response.error?.code || 'RPC_ERROR';
         (error as any).details = response.error?.details;
         pending.reject(error);
       }
     } catch (error) {
+      // Track decode error
+      if (this.config.metrics) {
+        this.config.metrics.incrementCounter(
+          'hermes_rpc_requests_total',
+          {
+            queue: this.config.queueName,
+            status: 'decode_error',
+          },
+          1
+        );
+      }
+
       pending.reject(new Error(`Failed to decode response: ${(error as Error).message}`));
     }
   }

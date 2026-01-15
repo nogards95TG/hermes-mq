@@ -9,6 +9,7 @@ import {
   ValidationError,
   HermesError,
   type RetryConfig,
+  MetricsCollector,
 } from '../../core';
 
 /**
@@ -43,6 +44,12 @@ export interface PublisherConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+  /**
+   * Enable metrics collection using the global MetricsCollector instance.
+   * When enabled, metrics are automatically collected and aggregated with all other components.
+   * Default: false
+   */
+  enableMetrics?: boolean;
 }
 
 /**
@@ -73,17 +80,25 @@ const DEFAULT_CONFIG = {
   publisherConfirms: true,
   confirmMode: 'sync' as const,
   mandatory: false,
+  enableMetrics: false,
   retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
 };
 
+/**
+ * Required publisher configuration with defaults applied
+ */
 type RequiredPublisherConfig = Required<
-  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
+  Omit<
+    PublisherConfig,
+    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'
+  >
 > & {
   exchanges?: PublisherConfig['exchanges'];
   exchange?: string;
   exchangeType?: 'topic' | 'fanout' | 'direct';
   onReturn?: (msg: ReturnedMessage) => void;
   confirmMode?: 'sync' | 'async';
+  metrics?: MetricsCollector;
 };
 
 /**
@@ -134,6 +149,8 @@ export class Publisher {
       defaultExchange: config.defaultExchange ?? config.exchange ?? 'amq.topic',
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
+      // Use global metrics if enabled
+      metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     };
 
     this.connectionManager = ConnectionManager.getInstance({
@@ -241,10 +258,36 @@ export class Publisher {
           // Async mode: confirmations handled via channel.on('ack'/'nack')
         }
 
+        // Track successful publish
+        if (this.config.metrics) {
+          this.config.metrics.incrementCounter(
+            'hermes_messages_published_total',
+            {
+              exchange,
+              eventName,
+              status: 'success',
+            },
+            1
+          );
+        }
+
         this.config.logger.debug(`Published event "${eventName}" to ${exchange}/${routingKey}`, {
           messageId,
         });
       } catch (error) {
+        // Track failed publish
+        if (this.config.metrics) {
+          this.config.metrics.incrementCounter(
+            'hermes_messages_published_total',
+            {
+              exchange,
+              eventName,
+              status: 'error',
+            },
+            1
+          );
+        }
+
         const message = error instanceof Error ? error.message : 'Unknown error';
         throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
       }

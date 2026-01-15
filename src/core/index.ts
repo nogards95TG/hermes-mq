@@ -52,3 +52,18 @@ export {
   MessageValidationError,
   MessageParsingError,
 } from './types/Errors';
+
+// Health Check
+export { HealthChecker } from './health/HealthChecker';
+export type {
+  HealthCheckerConfig,
+  HealthCheckResult,
+  HealthStatus,
+  ConnectionHealth,
+  ChannelHealth,
+  ConsumerHealth,
+} from './health/HealthChecker';
+
+// Metrics
+export { MetricsCollector } from './metrics/MetricsCollector';
+export type { Labels, MetricType, HistogramConfig } from './metrics/MetricsCollector';

@@ -25,6 +25,8 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - ⏱️ **TTL & Limits**: Queue message expiration and size limits
 - 🛡️ **Best Practices**: Following RabbitMQ production recommendations
 - 📊 **Slow Message Detection**: Multi-level thresholds for performance monitoring
+- 🏥 **Health Checks**: Built-in health check API for Kubernetes liveness/readiness probes
+- 📈 **Prometheus Metrics**: Zero-dependency metrics export in Prometheus text format
 
 ## Quick Start
 
@@ -484,6 +486,224 @@ const subscriber = new Subscriber({
 - Tracking handler duration metrics over time
 
 The slow message detection automatically measures handler execution time and triggers callbacks when thresholds are exceeded. Both `warn` and `error` thresholds are optional - use what fits your monitoring needs.
+
+### 16. Health Checks
+
+Built-in health check API for Kubernetes liveness/readiness probes and monitoring:
+
+```typescript
+import { HealthChecker } from 'hermes-mq';
+
+const health = new HealthChecker({
+  connection: { url: 'amqp://localhost' },
+});
+
+// Optionally register servers/subscribers for consumer tracking
+health.registerServer(rpcServer);
+health.registerServer(subscriber);
+
+// Perform health check
+const result = await health.check();
+console.log(result);
+/*
+{
+  status: 'healthy',  // 'healthy' | 'degraded' | 'unhealthy'
+  timestamp: 2025-01-15T19:48:56.000Z,
+  checks: {
+    connection: {
+      status: 'up',
+      connectedAt: 2025-01-15T19:48:50.000Z,
+      url: 'amqp://localhost'
+    },
+    channel: {
+      status: 'open',
+      count: 2
+    },
+    consumers: {
+      count: 2,
+      active: 2
+    }
+  },
+  uptime: 125000,
+  errors: undefined
+}
+*/
+
+// Simple boolean check
+const isHealthy = await health.isHealthy(); // true
+```
+
+**Express Integration:**
+
+```typescript
+import express from 'express';
+
+const app = express();
+
+app.get('/health', async (req, res) => {
+  const result = await health.check();
+  res.status(result.status === 'healthy' ? 200 : 503).json(result);
+});
+
+app.get('/readiness', async (req, res) => {
+  const isReady = await health.isHealthy();
+  res.sendStatus(isReady ? 200 : 503);
+});
+```
+
+**Kubernetes:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /readiness
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+**Health Status:**
+- `healthy`: Connection UP + at least 1 channel open
+- `degraded`: Connection UP but no channels (warning state)
+- `unhealthy`: Connection DOWN
+
+### 17. Prometheus Metrics
+
+Zero-dependency metrics export in Prometheus text format with automatic global collection:
+
+```typescript
+import { MetricsCollector, RpcServer, RpcClient, Publisher, Subscriber } from 'hermes-mq';
+
+// Get the global metrics instance (singleton)
+const metrics = MetricsCollector.global();
+
+// Simply enable metrics on your components
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'users',
+  enableMetrics: true, // Metrics automatically collected globally
+});
+
+const client = new RpcClient({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'users',
+  enableMetrics: true, // Metrics automatically collected globally
+});
+
+const publisher = new Publisher({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  enableMetrics: true, // Metrics automatically collected globally
+});
+
+const subscriber = new Subscriber({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  enableMetrics: true, // Metrics automatically collected globally
+});
+
+// All metrics from all components are automatically aggregated in the global instance
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.send(metrics.toPrometheus());
+});
+```
+
+**How it works:**
+- Set `enableMetrics: true` on any component to enable automatic metrics collection
+- All metrics are automatically collected in a global singleton `MetricsCollector` instance
+- Metrics from all components (RpcClient, RpcServer, Publisher, Subscriber) are aggregated together
+- No need to manually pass metrics instances around - just enable and go!
+- You can still create custom `MetricsCollector` instances if needed for specific use cases
+
+**Available Metrics:**
+
+```
+# RPC Client metrics
+hermes_rpc_requests_total{queue="users",status="success|timeout|error|decode_error"}
+hermes_rpc_request_duration_seconds{queue="users",status="success|error"}
+
+# RPC Server metrics
+hermes_messages_consumed_total{queue="users",command="GET_USER",status="ack|error"}
+hermes_message_processing_duration_seconds{queue="users",command="GET_USER"}
+
+# Publisher metrics
+hermes_messages_published_total{exchange="events",eventName="user.created",status="success|error"}
+
+# Subscriber metrics
+hermes_messages_consumed_total{exchange="events",eventName="user.created",status="ack|partial_error"}
+hermes_message_processing_duration_seconds{exchange="events",eventName="user.created"}
+```
+
+**Custom Metrics:**
+
+```typescript
+// Counter
+metrics.incrementCounter('messages_published_total', {
+  queue: 'users',
+  status: 'success'
+}, 1);
+
+// Gauge
+metrics.setGauge('connection_state', { state: 'connected' }, 1);
+metrics.incrementGauge('channel_count', {}, 1);
+metrics.decrementGauge('channel_count', {}, 1);
+
+// Histogram (for latencies, durations, etc.)
+metrics.observeHistogram('message_duration_seconds', {
+  queue: 'users'
+}, 0.125);
+
+// Custom help text
+metrics.setHelp('messages_published_total', 'Total number of published messages');
+
+// Reset all metrics
+metrics.reset();
+```
+
+**Prometheus Configuration:**
+
+```yaml
+scrape_configs:
+  - job_name: 'hermes-mq'
+    static_configs:
+      - targets: ['localhost:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+```
+
+**Example Output:**
+
+```
+# HELP hermes_rpc_requests_total Total count
+# TYPE hermes_rpc_requests_total counter
+hermes_rpc_requests_total{queue="users",status="success"} 1523
+hermes_rpc_requests_total{queue="users",status="timeout"} 12
+
+# HELP hermes_rpc_request_duration_seconds Histogram of values
+# TYPE hermes_rpc_request_duration_seconds histogram
+hermes_rpc_request_duration_seconds_bucket{queue="users",status="success",le="0.005"} 234
+hermes_rpc_request_duration_seconds_bucket{queue="users",status="success",le="0.01"} 856
+hermes_rpc_request_duration_seconds_bucket{queue="users",status="success",le="+Inf"} 1523
+hermes_rpc_request_duration_seconds_sum{queue="users",status="success"} 45.23
+hermes_rpc_request_duration_seconds_count{queue="users",status="success"} 1523
+```
+
+**Features:**
+- ✅ Zero external dependencies
+- ✅ Prometheus text format compatible
+- ✅ Automatic metrics for RPC Client/Server and Publisher/Subscriber
+- ✅ Counter, Gauge, and Histogram support
+- ✅ Label support for multi-dimensional metrics
+- ✅ Custom histogram buckets
+- ✅ Memory efficient
 
 ## 🏗️ Development
 

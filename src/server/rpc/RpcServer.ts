@@ -13,6 +13,7 @@ import {
   MessageValidationOptions,
   DeduplicationOptions,
   SlowMessageDetectionOptions,
+  MetricsCollector,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
@@ -32,6 +33,12 @@ export interface RpcServerConfig {
   messageValidation?: MessageValidationOptions;
   deduplication?: DeduplicationOptions;
   slowMessageDetection?: SlowMessageDetectionOptions;
+  /**
+   * Enable metrics collection using the global MetricsCollector instance.
+   * When enabled, metrics are automatically collected and aggregated with all other components.
+   * Default: false
+   */
+  enableMetrics?: boolean;
 }
 
 /**
@@ -43,11 +50,21 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
 ) => Promise<TResponse> | TResponse;
 
 /**
+ * Required RPC server configuration with defaults applied
+ */
+type RequiredRpcServerConfig = Required<
+  Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer'>
+> & {
+  metrics?: MetricsCollector;
+};
+
+/**
  * Default RPC server configuration
  */
 const DEFAULT_CONFIG = {
   prefetch: 10, // RabbitMQ recommends a value between 10-50 to balance throughput and fairness
   assertQueue: true,
+  enableMetrics: false,
   queueOptions: {
     durable: true,
   },
@@ -96,7 +113,7 @@ const DEFAULT_CONFIG = {
  * ```
  */
 export class RpcServer {
-  private config: Required<Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer'>>;
+  private config: RequiredRpcServerConfig;
   private connectionManager: ConnectionManager;
   private channel: amqp.ConfirmChannel | null = null;
   private logger: Logger;
@@ -117,7 +134,12 @@ export class RpcServer {
    * @param config - Server configuration including connection and queue details
    */
   constructor(config: RpcServerConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config } as any;
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
+      // Use global metrics if enabled
+      metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
+    } as any;
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
@@ -372,6 +394,27 @@ export class RpcServer {
       const result = deduplicationResult.result;
       const duration = Date.now() - startTime;
 
+      // Track metrics
+      if (this.config.metrics) {
+        this.config.metrics.incrementCounter(
+          'hermes_messages_consumed_total',
+          {
+            queue: this.config.queueName,
+            command: request.command,
+            status: 'ack',
+          },
+          1
+        );
+        this.config.metrics.observeHistogram(
+          'hermes_message_processing_duration_seconds',
+          {
+            queue: this.config.queueName,
+            command: request.command,
+          },
+          duration / 1000 // Convert to seconds
+        );
+      }
+
       // Check for slow message
       this.checkSlowMessage(request.command, duration, correlationId, request.metadata);
 
@@ -403,6 +446,19 @@ export class RpcServer {
       }
     } catch (error) {
       this.logger.error('Error handling request', error as Error);
+
+      // Track error metrics
+      if (this.config.metrics) {
+        this.config.metrics.incrementCounter(
+          'hermes_messages_consumed_total',
+          {
+            queue: this.config.queueName,
+            command: 'unknown',
+            status: 'error',
+          },
+          1
+        );
+      }
 
       // Handle retry logic
       await this.handleRequestError(msg, error, correlationId, replyTo);
@@ -579,6 +635,24 @@ export class RpcServer {
    */
   getHandlerCount(): number {
     return this.handlers.size;
+  }
+
+  /**
+   * Get number of active consumers
+   *
+   * @returns Number of active consumers (0 or 1 for RpcServer)
+   */
+  getConsumerCount(): number {
+    return this.isRunning && this.consumerTag ? 1 : 0;
+  }
+
+  /**
+   * Get number of in-flight messages
+   *
+   * @returns Number of messages currently being processed
+   */
+  getInFlightCount(): number {
+    return this.inFlightMessages.size;
   }
 
   /**

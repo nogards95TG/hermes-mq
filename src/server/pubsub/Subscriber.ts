@@ -11,6 +11,7 @@ import {
   AckStrategy,
   MessageValidationOptions,
   SlowMessageDetectionOptions,
+  MetricsCollector,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 
@@ -67,6 +68,12 @@ export interface SubscriberConfig {
   messageValidation?: MessageValidationOptions;
   errorHandling?: ErrorHandlingOptions;
   slowMessageDetection?: SlowMessageDetectionOptions;
+  /**
+   * Enable metrics collection using the global MetricsCollector instance.
+   * When enabled, metrics are automatically collected and aggregated with all other components.
+   * Default: false
+   */
+  enableMetrics?: boolean;
 }
 
 /**
@@ -92,6 +99,21 @@ interface HandlerRegistration<T = any> {
 }
 
 /**
+ * Required subscriber configuration with defaults applied
+ */
+type RequiredSubscriberConfig = Required<
+  Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions'>
+> & {
+  queueName?: string;
+  queueOptions?: SubscriberConfig['queueOptions'];
+  exchangeOptions?: SubscriberConfig['exchangeOptions'];
+  connection: SubscriberConfig['connection'];
+  logger: Logger;
+  serializer: Serializer;
+  metrics?: MetricsCollector;
+};
+
+/**
  * Default subscriber configuration
  */
 const DEFAULT_CONFIG = {
@@ -99,6 +121,7 @@ const DEFAULT_CONFIG = {
   exchangeOptions: { durable: true },
   queueOptions: { durable: true, exclusive: false, autoDelete: true },
   prefetch: 10,
+  enableMetrics: false,
   retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
   ackStrategy: { mode: 'auto' as const, requeue: true },
   messageValidation: {
@@ -147,13 +170,7 @@ const DEFAULT_CONFIG = {
 export class Subscriber {
   private connectionManager: ConnectionManager;
   private channel?: Channel;
-  private config: Required<
-    Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions'>
-  > & {
-    queueName?: string;
-    queueOptions?: SubscriberConfig['queueOptions'];
-    exchangeOptions?: SubscriberConfig['exchangeOptions'];
-  };
+  private config: RequiredSubscriberConfig;
   private handlers: HandlerRegistration[] = [];
   private consumerTag?: string;
   private running = false;
@@ -162,6 +179,7 @@ export class Subscriber {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private inFlightMessages = new Set<string>();
 
   /**
    * Create a new Subscriber instance
@@ -185,6 +203,8 @@ export class Subscriber {
       exchange: config.exchange,
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
+      // Use global metrics if enabled
+      metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     } as any;
 
     this.messageParser = new MessageParser(this.config.messageValidation);
@@ -390,6 +410,24 @@ export class Subscriber {
   }
 
   /**
+   * Get number of active consumers
+   *
+   * @returns Number of active consumers (0 or 1 for Subscriber)
+   */
+  getConsumerCount(): number {
+    return this.running && this.consumerTag ? 1 : 0;
+  }
+
+  /**
+   * Get number of in-flight messages
+   *
+   * @returns Number of messages currently being processed
+   */
+  getInFlightCount(): number {
+    return this.inFlightMessages.size;
+  }
+
+  /**
    * Get or create channel
    */
   private async ensureChannel(): Promise<Channel> {
@@ -482,6 +520,9 @@ export class Subscriber {
       return;
     }
 
+    const messageId = msg.properties.messageId || msg.fields.deliveryTag.toString();
+    this.inFlightMessages.add(messageId);
+
     try {
       // Parse and validate message
       const parseResult = await this.messageParser.parse(msg);
@@ -547,6 +588,8 @@ export class Subscriber {
       if (channel) {
         await channel.nack(msg, false, false);
       }
+    } finally {
+      this.inFlightMessages.delete(messageId);
     }
   }
 
@@ -584,6 +627,32 @@ export class Subscriber {
           });
         }
       });
+
+      // Track partial failure
+      if (this.config.metrics) {
+        this.config.metrics.incrementCounter(
+          'hermes_messages_consumed_total',
+          {
+            exchange: this.config.exchange,
+            eventName: context.eventName,
+            status: 'partial_error',
+          },
+          1
+        );
+      }
+    } else {
+      // Track success
+      if (this.config.metrics) {
+        this.config.metrics.incrementCounter(
+          'hermes_messages_consumed_total',
+          {
+            exchange: this.config.exchange,
+            eventName: context.eventName,
+            status: 'ack',
+          },
+          1
+        );
+      }
     }
 
     // Always ACK in isolated mode
@@ -605,6 +674,19 @@ export class Subscriber {
     await Promise.all(
       matchingHandlers.map(({ handler }) => this.executeHandler(handler, data, context))
     );
+
+    // Track success
+    if (this.config.metrics) {
+      this.config.metrics.incrementCounter(
+        'hermes_messages_consumed_total',
+        {
+          exchange: this.config.exchange,
+          eventName: context.eventName,
+          status: 'ack',
+        },
+        1
+      );
+    }
 
     // All succeeded
     await channel.ack(msg);
@@ -631,12 +713,48 @@ export class Subscriber {
       }
 
       const duration = Date.now() - startTime;
-      this.checkSlowMessage(context.eventName, duration, context.rawMessage.properties.messageId, context.metadata);
+
+      // Track processing duration
+      if (this.config.metrics) {
+        this.config.metrics.observeHistogram(
+          'hermes_message_processing_duration_seconds',
+          {
+            exchange: this.config.exchange,
+            eventName: context.eventName,
+          },
+          duration / 1000 // Convert to seconds
+        );
+      }
+
+      this.checkSlowMessage(
+        context.eventName,
+        duration,
+        context.rawMessage.properties.messageId,
+        context.metadata
+      );
 
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.checkSlowMessage(context.eventName, duration, context.rawMessage.properties.messageId, context.metadata);
+
+      // Track processing duration even on error
+      if (this.config.metrics) {
+        this.config.metrics.observeHistogram(
+          'hermes_message_processing_duration_seconds',
+          {
+            exchange: this.config.exchange,
+            eventName: context.eventName,
+          },
+          duration / 1000 // Convert to seconds
+        );
+      }
+
+      this.checkSlowMessage(
+        context.eventName,
+        duration,
+        context.rawMessage.properties.messageId,
+        context.metadata
+      );
       throw error;
     }
   }

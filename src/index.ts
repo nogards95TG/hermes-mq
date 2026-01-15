@@ -26,6 +26,8 @@ export {
   ChannelError,
   TimeoutError,
   ValidationError,
+  HealthChecker,
+  MetricsCollector,
 } from './core';
 
 export type {
@@ -37,6 +39,15 @@ export type {
   ResponseEnvelope,
   Serializer,
   Logger,
+  HealthCheckerConfig,
+  HealthCheckResult,
+  HealthStatus,
+  ConnectionHealth,
+  ChannelHealth,
+  ConsumerHealth,
+  Labels,
+  MetricType,
+  HistogramConfig,
 } from './core';
 
 // ============================================================================
