@@ -32,6 +32,9 @@ export type {
   DLQOptions,
   MessageValidationOptions,
   DeduplicationOptions,
+  SlowThresholds,
+  SlowMessageContext,
+  SlowMessageDetectionOptions,
 } from './types/Messages';
 
 export { JsonSerializer } from './types/Messages';

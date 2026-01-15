@@ -12,6 +12,7 @@ import {
   AckStrategy,
   MessageValidationOptions,
   DeduplicationOptions,
+  SlowMessageDetectionOptions,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
@@ -30,6 +31,7 @@ export interface RpcServerConfig {
   ackStrategy?: AckStrategy;
   messageValidation?: MessageValidationOptions;
   deduplication?: DeduplicationOptions;
+  slowMessageDetection?: SlowMessageDetectionOptions;
 }
 
 /**
@@ -61,6 +63,9 @@ const DEFAULT_CONFIG = {
     enabled: false,
     cacheTTL: 300000,
     cacheSize: 10000,
+  },
+  slowMessageDetection: {
+    slowThresholds: {},
   },
 };
 
@@ -351,6 +356,7 @@ export class RpcServer {
       }
 
       // Check for duplicate (if enabled)
+      const startTime = Date.now();
       const deduplicationResult = await this.deduplicator.process(msg, async () => {
         // Execute handler
         return await handler(request.data, request.metadata);
@@ -364,6 +370,10 @@ export class RpcServer {
       }
 
       const result = deduplicationResult.result;
+      const duration = Date.now() - startTime;
+
+      // Check for slow message
+      this.checkSlowMessage(request.command, duration, correlationId, request.metadata);
 
       // Send success response
       if (replyTo) {
@@ -569,6 +579,64 @@ export class RpcServer {
    */
   getHandlerCount(): number {
     return this.handlers.size;
+  }
+
+  /**
+   * Check if message processing was slow and trigger callback
+   */
+  private checkSlowMessage(
+    command: string,
+    duration: number,
+    messageId?: string,
+    metadata?: Record<string, any>
+  ): void {
+    const thresholds = this.config.slowMessageDetection?.slowThresholds;
+
+    if (!thresholds || (!thresholds.warn && !thresholds.error)) {
+      return;
+    }
+
+    let level: 'warn' | 'error' | null = null;
+    let threshold = 0;
+
+    if (thresholds.error && duration >= thresholds.error) {
+      level = 'error';
+      threshold = thresholds.error;
+    } else if (thresholds.warn && duration >= thresholds.warn) {
+      level = 'warn';
+      threshold = thresholds.warn;
+    }
+
+    if (level) {
+      const context = {
+        command,
+        duration,
+        threshold,
+        level,
+        messageId,
+        metadata,
+      };
+
+      // Call user callback if provided
+      if (this.config.slowMessageDetection?.onSlowMessage) {
+        this.config.slowMessageDetection.onSlowMessage(context);
+      }
+
+      // Log by default
+      const logMessage = `Slow message detected: ${command} took ${duration}ms (threshold: ${threshold}ms)`;
+      const logContext = {
+        command,
+        duration,
+        threshold,
+        messageId,
+      };
+
+      if (level === 'error') {
+        this.logger.error(logMessage, undefined, logContext);
+      } else {
+        this.logger.warn(logMessage, logContext);
+      }
+    }
   }
 
   /**

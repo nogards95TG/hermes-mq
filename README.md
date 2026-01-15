@@ -24,6 +24,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 - 🚦 **Flow Control**: Built-in backpressure handling
 - ⏱️ **TTL & Limits**: Queue message expiration and size limits
 - 🛡️ **Best Practices**: Following RabbitMQ production recommendations
+- 📊 **Slow Message Detection**: Multi-level thresholds for performance monitoring
 
 ## Quick Start
 
@@ -419,6 +420,70 @@ const config = {
 };
 // Delay: min(base * 2^attempt, 60s) = 5s, 10s, 20s, 40s, 60s...
 ```
+
+### 15. Slow Message Detection
+
+Monitor and detect slow message processing with multi-level thresholds:
+
+**RPC Server:**
+
+```typescript
+import { RpcServer } from 'hermes-mq';
+
+const server = new RpcServer({
+  connection: { url: 'amqp://localhost' },
+  queueName: 'users',
+  slowMessageDetection: {
+    slowThresholds: {
+      warn: 1000,  // Log warning if handler takes > 1 second
+      error: 5000, // Log error if handler takes > 5 seconds
+    },
+    onSlowMessage: (context) => {
+      // Custom handler for slow messages
+      logger[context.level](`Slow handler detected`, {
+        command: context.command,
+        duration: context.duration,
+        threshold: context.threshold,
+        messageId: context.messageId,
+      });
+
+      // Send to monitoring system
+      metrics.histogram('handler.duration', context.duration, {
+        command: context.command,
+        level: context.level,
+      });
+    },
+  },
+});
+```
+
+**Pub/Sub Subscriber:**
+
+```typescript
+import { Subscriber } from 'hermes-mq';
+
+const subscriber = new Subscriber({
+  connection: { url: 'amqp://localhost' },
+  exchange: 'events',
+  slowMessageDetection: {
+    slowThresholds: {
+      warn: 1000,
+      error: 5000,
+    },
+    onSlowMessage: (context) => {
+      logger.warn(`Slow event handler: ${context.eventName} took ${context.duration}ms`);
+    },
+  },
+});
+```
+
+**Use Cases:**
+- Performance monitoring and bottleneck detection
+- SLA enforcement and alerting
+- Identifying problematic handlers that need optimization
+- Tracking handler duration metrics over time
+
+The slow message detection automatically measures handler execution time and triggers callbacks when thresholds are exceeded. Both `warn` and `error` thresholds are optional - use what fits your monitoring needs.
 
 ## 🏗️ Development
 

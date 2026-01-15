@@ -449,4 +449,185 @@ describe('RpcServer', () => {
       vi.useRealTimers();
     });
   });
+
+  describe('slow message detection', () => {
+    it('should trigger warn callback for slow messages', async () => {
+      const onSlowMessage = vi.fn();
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+          },
+          onSlowMessage,
+        },
+      });
+
+      await server.start();
+
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve({ result: 'success' }), 150))
+        );
+      server.registerHandler('SLOW_COMMAND', handler);
+
+      const request = {
+        id: 'test-id',
+        command: 'SLOW_COMMAND',
+        timestamp: Date.now(),
+        data: { input: 'test' },
+      };
+
+      const message = {
+        content: Buffer.from(JSON.stringify(request)),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+        },
+      };
+
+      await mockConnection._consumeCallback(message);
+
+      expect(onSlowMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: 'SLOW_COMMAND',
+          level: 'warn',
+          threshold: 100,
+          duration: expect.any(Number),
+        })
+      );
+    });
+
+    it('should trigger error callback for very slow messages', async () => {
+      const onSlowMessage = vi.fn();
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+            error: 200,
+          },
+          onSlowMessage,
+        },
+      });
+
+      await server.start();
+
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve({ result: 'success' }), 250))
+        );
+      server.registerHandler('VERY_SLOW_COMMAND', handler);
+
+      const request = {
+        id: 'test-id',
+        command: 'VERY_SLOW_COMMAND',
+        timestamp: Date.now(),
+        data: { input: 'test' },
+      };
+
+      const message = {
+        content: Buffer.from(JSON.stringify(request)),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+        },
+      };
+
+      await mockConnection._consumeCallback(message);
+
+      expect(onSlowMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: 'VERY_SLOW_COMMAND',
+          level: 'error',
+          threshold: 200,
+          duration: expect.any(Number),
+        })
+      );
+    });
+
+    it('should not trigger callback for fast messages', async () => {
+      const onSlowMessage = vi.fn();
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+          },
+          onSlowMessage,
+        },
+      });
+
+      await server.start();
+
+      const handler = vi.fn().mockResolvedValue({ result: 'success' });
+      server.registerHandler('FAST_COMMAND', handler);
+
+      const request = {
+        id: 'test-id',
+        command: 'FAST_COMMAND',
+        timestamp: Date.now(),
+        data: { input: 'test' },
+      };
+
+      const message = {
+        content: Buffer.from(JSON.stringify(request)),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+        },
+      };
+
+      await mockConnection._consumeCallback(message);
+
+      expect(onSlowMessage).not.toHaveBeenCalled();
+    });
+
+    it('should work without slow message detection config', async () => {
+      server = new RpcServer({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+
+      await server.start();
+
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve({ result: 'success' }), 150))
+        );
+      server.registerHandler('COMMAND', handler);
+
+      const request = {
+        id: 'test-id',
+        command: 'COMMAND',
+        timestamp: Date.now(),
+        data: { input: 'test' },
+      };
+
+      const message = {
+        content: Buffer.from(JSON.stringify(request)),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+        },
+      };
+
+      // Should not throw
+      await expect(mockConnection._consumeCallback(message)).resolves.not.toThrow();
+    });
+  });
 });

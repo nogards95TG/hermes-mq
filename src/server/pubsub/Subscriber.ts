@@ -10,6 +10,7 @@ import {
   type RetryConfig,
   AckStrategy,
   MessageValidationOptions,
+  SlowMessageDetectionOptions,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 
@@ -65,6 +66,7 @@ export interface SubscriberConfig {
   ackStrategy?: AckStrategy;
   messageValidation?: MessageValidationOptions;
   errorHandling?: ErrorHandlingOptions;
+  slowMessageDetection?: SlowMessageDetectionOptions;
 }
 
 /**
@@ -105,6 +107,9 @@ const DEFAULT_CONFIG = {
   errorHandling: {
     isolateErrors: false,
     continueOnError: false,
+  },
+  slowMessageDetection: {
+    slowThresholds: {},
   },
 };
 
@@ -610,16 +615,88 @@ export class Subscriber {
    * Execute a single handler with timeout support
    */
   private async executeHandler(handler: EventHandler, data: any, context: any): Promise<any> {
-    if (this.config.handlerTimeout) {
-      return Promise.race([
-        handler(data, context),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Handler timeout')), this.config.handlerTimeout)
-        ),
-      ]);
+    const startTime = Date.now();
+
+    try {
+      let result;
+      if (this.config.handlerTimeout) {
+        result = await Promise.race([
+          handler(data, context),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Handler timeout')), this.config.handlerTimeout)
+          ),
+        ]);
+      } else {
+        result = await handler(data, context);
+      }
+
+      const duration = Date.now() - startTime;
+      this.checkSlowMessage(context.eventName, duration, context.rawMessage.properties.messageId, context.metadata);
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.checkSlowMessage(context.eventName, duration, context.rawMessage.properties.messageId, context.metadata);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if message processing was slow and trigger callback
+   */
+  private checkSlowMessage(
+    eventName: string,
+    duration: number,
+    messageId?: string,
+    metadata?: Record<string, any>
+  ): void {
+    const thresholds = this.config.slowMessageDetection?.slowThresholds;
+
+    if (!thresholds || (!thresholds.warn && !thresholds.error)) {
+      return;
     }
 
-    return handler(data, context);
+    let level: 'warn' | 'error' | null = null;
+    let threshold = 0;
+
+    if (thresholds.error && duration >= thresholds.error) {
+      level = 'error';
+      threshold = thresholds.error;
+    } else if (thresholds.warn && duration >= thresholds.warn) {
+      level = 'warn';
+      threshold = thresholds.warn;
+    }
+
+    if (level) {
+      const context = {
+        eventName,
+        duration,
+        threshold,
+        level,
+        messageId,
+        metadata,
+      };
+
+      // Call user callback if provided
+      if (this.config.slowMessageDetection?.onSlowMessage) {
+        this.config.slowMessageDetection.onSlowMessage(context);
+      }
+
+      // Log by default
+      const logMessage = `Slow message detected: ${eventName} took ${duration}ms (threshold: ${threshold}ms)`;
+      const logContext = {
+        eventName,
+        duration,
+        threshold,
+        messageId,
+      };
+
+      if (level === 'error') {
+        this.config.logger.error(logMessage, undefined, logContext);
+      } else {
+        this.config.logger.warn(logMessage, logContext);
+      }
+    }
   }
 
   /**

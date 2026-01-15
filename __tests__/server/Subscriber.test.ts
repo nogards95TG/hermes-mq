@@ -285,6 +285,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1' },
       };
 
       await consumeCallback(message);
@@ -320,6 +321,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1' },
       };
       await consumeCallback(message1);
 
@@ -333,6 +335,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'user.updated' },
+        properties: { messageId: 'msg-2' },
       };
       await consumeCallback(message2);
 
@@ -361,6 +364,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'order.created' },
+        properties: { messageId: 'msg-1' },
       };
       await consumeCallback(message1);
 
@@ -374,6 +378,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'order.shipped.express' },
+        properties: { messageId: 'msg-2' },
       };
       await consumeCallback(message2);
 
@@ -402,6 +407,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'order.created' },
+        properties: { messageId: 'msg-1' },
       };
       await consumeCallback(message);
 
@@ -432,6 +438,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1' },
       };
 
       await consumeCallback(message);
@@ -472,6 +479,7 @@ describe('Subscriber', () => {
           })
         ),
         fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1' },
       };
 
       await consumeCallback(message);
@@ -530,6 +538,215 @@ describe('Subscriber', () => {
       expect(mockChannel.consume).toHaveBeenCalledTimes(2);
 
       vi.useRealTimers();
+    });
+  });
+
+  describe('slow message detection', () => {
+    it('should trigger warn callback for slow handlers', async () => {
+      const onSlowMessage = vi.fn();
+      let consumeCallback: any;
+
+      subscriber = new Subscriber({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'events',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+          },
+          onSlowMessage,
+        },
+      });
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(undefined), 150))
+        );
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(
+          JSON.stringify({
+            eventName: 'user.created',
+            data: {},
+            timestamp: Date.now(),
+          })
+        ),
+        fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-123' },
+      };
+
+      await consumeCallback(message);
+
+      expect(onSlowMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: 'user.created',
+          level: 'warn',
+          threshold: 100,
+          duration: expect.any(Number),
+        })
+      );
+    });
+
+    it('should trigger error callback for very slow handlers', async () => {
+      const onSlowMessage = vi.fn();
+      let consumeCallback: any;
+
+      subscriber = new Subscriber({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'events',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+            error: 200,
+          },
+          onSlowMessage,
+        },
+      });
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(undefined), 250))
+        );
+      subscriber.on('order.placed', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(
+          JSON.stringify({
+            eventName: 'order.placed',
+            data: {},
+            timestamp: Date.now(),
+          })
+        ),
+        fields: { routingKey: 'order.placed' },
+        properties: { messageId: 'msg-456' },
+      };
+
+      await consumeCallback(message);
+
+      expect(onSlowMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: 'order.placed',
+          level: 'error',
+          threshold: 200,
+          duration: expect.any(Number),
+        })
+      );
+    });
+
+    it('should not trigger callback for fast handlers', async () => {
+      const onSlowMessage = vi.fn();
+      let consumeCallback: any;
+
+      subscriber = new Subscriber({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'events',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+          },
+          onSlowMessage,
+        },
+      });
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      const handler = vi.fn().mockResolvedValue(undefined);
+      subscriber.on('product.updated', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(
+          JSON.stringify({
+            eventName: 'product.updated',
+            data: {},
+            timestamp: Date.now(),
+          })
+        ),
+        fields: { routingKey: 'product.updated' },
+        properties: { messageId: 'msg-789' },
+      };
+
+      await consumeCallback(message);
+
+      expect(onSlowMessage).not.toHaveBeenCalled();
+    });
+
+    it('should detect slow messages even when handler fails', async () => {
+      const onSlowMessage = vi.fn();
+      let consumeCallback: any;
+
+      subscriber = new Subscriber({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'events',
+        slowMessageDetection: {
+          slowThresholds: {
+            warn: 100,
+          },
+          onSlowMessage,
+        },
+      });
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      const handler = vi.fn().mockImplementation(
+        () =>
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Handler failed')), 150)
+          )
+      );
+      subscriber.on('payment.failed', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(
+          JSON.stringify({
+            eventName: 'payment.failed',
+            data: {},
+            timestamp: Date.now(),
+          })
+        ),
+        fields: { routingKey: 'payment.failed' },
+        properties: { messageId: 'msg-error' },
+      };
+
+      await consumeCallback(message);
+
+      expect(onSlowMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: 'payment.failed',
+          level: 'warn',
+          threshold: 100,
+          duration: expect.any(Number),
+        })
+      );
     });
   });
 });

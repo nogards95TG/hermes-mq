@@ -92,3 +92,32 @@ export interface DeduplicationOptions {
   cacheSize: number;
   keyExtractor?: (msg: any) => string;
 }
+
+/**
+ * Slow message detection thresholds
+ */
+export interface SlowThresholds {
+  warn?: number;
+  error?: number;
+}
+
+/**
+ * Slow message context information
+ */
+export interface SlowMessageContext {
+  command?: string;
+  eventName?: string;
+  duration: number;
+  threshold: number;
+  level: 'warn' | 'error';
+  messageId?: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Slow message detection configuration
+ */
+export interface SlowMessageDetectionOptions {
+  slowThresholds?: SlowThresholds;
+  onSlowMessage?: (context: SlowMessageContext) => void;
+}
