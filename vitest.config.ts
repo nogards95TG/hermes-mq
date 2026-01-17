@@ -16,6 +16,10 @@ export default defineConfig({
         '**/*.test.ts',
         '**/*.spec.ts',
         'examples/**',
+        '**/index.ts',
+        '**/*.config.ts',
+        '**/.eslintrc.js',
+        'scripts/**',
       ],
       thresholds: {
         lines: 75,

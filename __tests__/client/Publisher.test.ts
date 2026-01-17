@@ -314,4 +314,211 @@ describe('Publisher', () => {
       expect(mockChannel.assertExchange).toHaveBeenCalledWith('logs', 'fanout', { durable: false });
     });
   });
+
+  describe('metrics', () => {
+    let mockMetrics: any;
+
+    beforeEach(() => {
+      mockMetrics = {
+        incrementCounter: vi.fn(),
+        observeHistogram: vi.fn(),
+      };
+
+      publisher = new Publisher({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+        enableMetrics: true,
+      });
+
+      (publisher as any).config.metrics = mockMetrics;
+    });
+
+    it('should track successful publish', async () => {
+      await publisher.publish('user.created', { id: 1 });
+
+      expect(mockMetrics.incrementCounter).toHaveBeenCalledWith(
+        'hermes_messages_published_total',
+        {
+          exchange: 'test-exchange',
+          eventName: 'user.created',
+          status: 'success',
+        },
+        1
+      );
+    });
+  });
+
+  describe('channel events', () => {
+    let channelEventHandlers: Map<string, Function>;
+
+    beforeEach(() => {
+      channelEventHandlers = new Map();
+      mockChannel.on = vi.fn((event: string, handler: Function) => {
+        channelEventHandlers.set(event, handler);
+        return mockChannel;
+      });
+
+      publisher = new Publisher({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+      });
+    });
+
+    it('should handle channel close event', async () => {
+      await publisher.publish('event', {});
+
+      const closeHandler = channelEventHandlers.get('close');
+      expect(closeHandler).toBeDefined();
+
+      // Simulate channel close
+      closeHandler!();
+
+      // Channel should be undefined after close
+      expect((publisher as any).channel).toBeUndefined();
+    });
+
+    it('should handle channel error event', async () => {
+      await publisher.publish('event', {});
+
+      const errorHandler = channelEventHandlers.get('error');
+      expect(errorHandler).toBeDefined();
+
+      // Simulate channel error
+      const testError = new Error('Channel error');
+      errorHandler!(testError);
+
+      // Should log error but not throw
+      expect(errorHandler).toBeDefined();
+    });
+
+    it('should handle returned messages', async () => {
+      const onReturn = vi.fn();
+      publisher = new Publisher({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+        mandatory: true,
+        onReturn,
+      });
+
+      await publisher.publish('event', {});
+
+      const returnHandler = channelEventHandlers.get('return');
+      expect(returnHandler).toBeDefined();
+
+      // Simulate returned message
+      const returnedMsg = {
+        fields: {
+          replyCode: 312,
+          replyText: 'NO_ROUTE',
+          exchange: 'test-exchange',
+          routingKey: 'event',
+        },
+        content: Buffer.from('test'),
+      };
+
+      returnHandler!(returnedMsg);
+
+      expect(onReturn).toHaveBeenCalledWith({
+        replyCode: 312,
+        replyText: 'NO_ROUTE',
+        exchange: 'test-exchange',
+        routingKey: 'event',
+        message: returnedMsg.content,
+      });
+    });
+
+    it('should handle drain event', async () => {
+      const processBufferSpy = vi.spyOn(publisher as any, 'processWriteBuffer');
+
+      await publisher.publish('event', {});
+
+      const drainHandler = channelEventHandlers.get('drain');
+      expect(drainHandler).toBeDefined();
+
+      // Simulate drain event
+      drainHandler!();
+
+      expect(processBufferSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('retry logic', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should retry failed publish with exponential backoff', async () => {
+      publisher = new Publisher({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+        retry: {
+          enabled: true,
+          maxAttempts: 3,
+          initialDelay: 100,
+        },
+      });
+
+      // First two attempts fail, third succeeds
+      mockChannel.publish.mockReturnValueOnce(true);
+      mockChannel.waitForConfirms
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce(undefined);
+
+      const publishPromise = publisher.publish('event', {});
+
+      // Fast-forward through retries
+      await vi.advanceTimersByTimeAsync(100); // First retry
+      await vi.advanceTimersByTimeAsync(200); // Second retry
+
+      await publishPromise;
+
+      expect(mockChannel.waitForConfirms).toHaveBeenCalledTimes(3);
+    });
+
+    it('should throw after max retry attempts', async () => {
+      publisher = new Publisher({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        exchange: 'test-exchange',
+        retry: {
+          enabled: true,
+          maxAttempts: 2,
+          initialDelay: 100,
+        },
+      });
+
+      mockChannel.publish.mockReturnValue(true);
+      mockChannel.waitForConfirms.mockRejectedValue(new Error('Network error'));
+
+      const publishPromise = publisher.publish('event', {}).catch((error) => error);
+
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(200);
+
+      const error = await publishPromise;
+      expect(error.message).toContain('Failed to publish after 2 attempts');
+    });
+  });
+
+  describe('assert exchange errors', () => {
+    it('should throw HermesError when exchange assertion fails', async () => {
+      mockChannel.assertExchange.mockRejectedValueOnce(new Error('Exchange assertion failed'));
+
+      await expect(publisher.publish('event', {})).rejects.toThrow('Failed to assert exchange');
+    });
+  });
 });

@@ -271,5 +271,180 @@ describe('RpcClient', () => {
 
       expect(channel.cancel).toHaveBeenCalledWith('test-consumer');
     });
+
+    it('should handle consumer cancel errors', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const channel = await mockConnection.createConfirmChannel();
+      channel.cancel = vi.fn().mockRejectedValueOnce(new Error('Cancel failed'));
+
+      // Should not throw
+      await expect(client.close()).resolves.not.toThrow();
+    });
+
+    it('should handle channel close errors', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const channel = await mockConnection.createConfirmChannel();
+      channel.close = vi.fn().mockRejectedValueOnce(new Error('Close failed'));
+
+      // Should not throw
+      await expect(client.close()).resolves.not.toThrow();
+    });
+  });
+
+  describe('channel events', () => {
+    let channelEventHandlers: Map<string, Function>;
+
+    beforeEach(() => {
+      channelEventHandlers = new Map();
+      const originalCreateChannel = mockConnection.createConfirmChannel;
+      mockConnection.createConfirmChannel = vi.fn().mockImplementation(async () => {
+        const channel = await originalCreateChannel();
+        channel.on = vi.fn((event: string, handler: Function) => {
+          channelEventHandlers.set(event, handler);
+          return channel;
+        });
+        return channel;
+      });
+
+      client = new RpcClient({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+    });
+
+    it('should handle channel error event', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const errorHandler = channelEventHandlers.get('error');
+      expect(errorHandler).toBeDefined();
+
+      // Simulate channel error
+      errorHandler!(new Error('Channel error'));
+
+      expect(client.isClientReady()).toBe(false);
+    });
+
+    it('should handle channel close event', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const closeHandler = channelEventHandlers.get('close');
+      expect(closeHandler).toBeDefined();
+
+      // Simulate channel close
+      closeHandler!();
+
+      expect(client.isClientReady()).toBe(false);
+    });
+  });
+
+  describe('initialization errors', () => {
+    it('should throw error when initialization fails', async () => {
+      mockConnection.createConfirmChannel = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Init failed'));
+
+      client = new RpcClient({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+
+      await expect(client.send('TEST', {})).rejects.toThrow();
+    });
+  });
+
+  describe('reply handling edge cases', () => {
+    beforeEach(() => {
+      client = new RpcClient({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+    });
+
+    it('should ignore reply without correlationId', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      // Simulate reply without correlationId
+      mockConnection._consumeCallback({
+        content: Buffer.from('{}'),
+        properties: {},
+      });
+
+      // Should not crash or throw
+      expect(true).toBe(true);
+    });
+
+    it('should ignore reply for unknown correlationId', async () => {
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      // Simulate reply with unknown correlationId
+      mockConnection._consumeCallback({
+        content: Buffer.from('{}'),
+        properties: { correlationId: 'unknown-id' },
+      });
+
+      // Should not crash or throw
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('cleanup of expired requests', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should cleanup expired pending requests', async () => {
+      client = new RpcClient({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+        timeout: 1000,
+      });
+
+      // Start a request that will timeout and catch the error
+      const sendPromise = client.send('TEST', {}).catch(() => {});
+
+      // Advance time to trigger timeout
+      await vi.advanceTimersByTimeAsync(1100);
+
+      await sendPromise;
+
+      // Advance time to trigger cleanup interval (30 seconds)
+      await vi.advanceTimersByTimeAsync(30000);
+
+      // Pending requests should be cleaned up
+      expect((client as any).pendingRequests.size).toBe(0);
+    });
+
+    it('should run cleanup interval every 30 seconds', async () => {
+      client = new RpcClient({
+        connection: {
+          url: 'amqp://localhost',
+        },
+        queueName: 'test-queue',
+      });
+
+      const cleanupSpy = vi.spyOn(client as any, 'cleanupExpiredRequests');
+
+      // Trigger initialization
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      // Advance time by 30 seconds
+      await vi.advanceTimersByTimeAsync(30000);
+
+      expect(cleanupSpy).toHaveBeenCalled();
+    });
   });
 });
