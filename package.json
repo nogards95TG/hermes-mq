@@ -1,6 +1,6 @@
 {
   "name": "hermes-mq",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Modern, type-safe RabbitMQ client library for Node.js with RPC and Pub/Sub support",
   "author": "nogards95TG",
   "license": "MIT",
