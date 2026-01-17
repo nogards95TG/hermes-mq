@@ -82,16 +82,13 @@ const DEFAULT_CONFIG = {
   mandatory: false,
   enableMetrics: false,
   retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
-};
+} as const;
 
 /**
  * Required publisher configuration with defaults applied
  */
 type RequiredPublisherConfig = Required<
-  Omit<
-    PublisherConfig,
-    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'
-  >
+  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
 > & {
   exchanges?: PublisherConfig['exchanges'];
   exchange?: string;
@@ -334,6 +331,12 @@ export class Publisher {
     );
   }
 
+  // Placeholder for future broadcast implementation
+  // Should publish to all known subscribers/exchanges
+  async broadcast(): Promise<void> {
+    this.config.logger.warn('Broadcast method not implemented yet');
+  }
+
   /**
    * Close publisher and cleanup resources
    *
@@ -365,6 +368,7 @@ export class Publisher {
     const connection = await this.connectionManager.getConnection();
 
     // Create confirm channel if publisher confirms are enabled, otherwise regular channel
+    // Cast to any to access createChannel methods not defined in types but exist at runtime
     const channel = this.config.publisherConfirms
       ? await (connection as any).createConfirmChannel()
       : await (connection as any).createChannel();
