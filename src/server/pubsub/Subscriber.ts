@@ -14,6 +14,8 @@ import {
   MetricsCollector,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
+import { DebugEmitter } from '../../debug/DebugEmitter';
+import type { DebugConfig } from '../../debug/types';
 
 /**
  * Error handling configuration for subscribers
@@ -74,6 +76,10 @@ export interface SubscriberConfig {
    * Default: false
    */
   enableMetrics?: boolean;
+  /**
+   * Debug UI configuration
+   */
+  debug?: DebugConfig;
 }
 
 /**
@@ -180,6 +186,8 @@ export class Subscriber {
   private maxReconnectAttempts = 5;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private inFlightMessages = new Set<string>();
+  private debugEmitter: DebugEmitter | null = null;
+  private serviceId: string;
 
   /**
    * Create a new Subscriber instance
@@ -208,6 +216,12 @@ export class Subscriber {
     } as any;
 
     this.messageParser = new MessageParser(this.config.messageValidation);
+
+    // Initialize debug emitter if enabled
+    this.serviceId = `subscriber:${config.exchange}:${Date.now()}`;
+    if (config.debug?.enabled) {
+      this.debugEmitter = new DebugEmitter(this.serviceId);
+    }
 
     this.connectionManager = ConnectionManager.getInstance({
       url: this.config.connection.url,
@@ -558,6 +572,19 @@ export class Subscriber {
 
       this.config.logger.debug(`Received event: ${eventName}`);
 
+      // Debug: Emit message received event
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageReceived({
+          id: messageId,
+          type: 'pubsub-consume',
+          queue: this.config.exchange,
+          command: eventName,
+          correlationId: msg.properties.correlationId || messageId,
+          payload: data,
+          metadata,
+        });
+      }
+
       // Find handlers that match the event pattern
       const matchingHandlers = this.handlers.filter((h) => h.regex.test(eventName));
 
@@ -577,13 +604,49 @@ export class Subscriber {
 
       if (this.config.errorHandling?.isolateErrors) {
         // Isolate errors - continue processing even if one fails
+        const startTime = Date.now();
         await this.executeHandlersIsolated(matchingHandlers, data, context, channel, msg);
+        
+        // Debug: Emit success event
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageSuccess({
+            id: messageId,
+            command: eventName,
+            duration: Date.now() - startTime,
+          });
+        }
       } else {
         // All-or-nothing - if any fails, NACK all
+        const startTime = Date.now();
         await this.executeHandlersStrict(matchingHandlers, data, context, channel, msg);
+        
+        // Debug: Emit success event
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageSuccess({
+            id: messageId,
+            command: eventName,
+            duration: Date.now() - startTime,
+          });
+        }
       }
     } catch (error) {
       this.config.logger.error('Error handling message', error as Error);
+      
+      // Debug: Emit error event
+      const errorObj = error as Error;
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageError({
+          id: messageId,
+          command: msg.fields.routingKey || 'unknown',
+          duration: 0,
+          error: {
+            code: errorObj.name || 'HANDLER_ERROR',
+            message: errorObj.message,
+            stack: errorObj.stack,
+          },
+        });
+      }
+      
       // Reject without requeue (dead letter if configured)
       if (channel) {
         await channel.nack(msg, false, false);
@@ -825,5 +888,19 @@ export class Subscriber {
     const escaped = pattern.replace(/\./g, '\\.').replace(/\*/g, '[^.]+').replace(/#/g, '.*');
 
     return new RegExp(`^${escaped}$`);
+  }
+
+  /**
+   * Get debug emitter for connecting to DebugServer
+   */
+  getDebugEmitter(): DebugEmitter | null {
+    return this.debugEmitter;
+  }
+
+  /**
+   * Get service ID for debug tracking
+   */
+  getServiceId(): string {
+    return this.serviceId;
   }
 }

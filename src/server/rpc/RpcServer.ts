@@ -17,6 +17,8 @@ import {
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
+import { DebugEmitter } from '../../debug/DebugEmitter';
+import type { DebugConfig } from '../../debug/types';
 
 /**
  * RPC Server configuration
@@ -39,6 +41,12 @@ export interface RpcServerConfig {
    * Default: false
    */
   enableMetrics?: boolean;
+  /**
+   * Debug UI configuration
+   * When enabled, sends real-time events to the debug web UI for monitoring
+   * Default: disabled
+   */
+  debug?: DebugConfig;
 }
 
 /**
@@ -53,7 +61,7 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
  * Required RPC server configuration with defaults applied
  */
 type RequiredRpcServerConfig = Required<
-  Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer'>
+  Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer' | 'debug'>
 > & {
   metrics?: MetricsCollector;
 };
@@ -127,6 +135,8 @@ export class RpcServer {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private debugEmitter: DebugEmitter | null = null;
+  private serviceId: string;
 
   /**
    * Create a new RPC server instance
@@ -145,6 +155,12 @@ export class RpcServer {
     this.serializer = config.serializer || new JsonSerializer();
     this.messageParser = new MessageParser(this.config.messageValidation);
     this.deduplicator = new MessageDeduplicator(this.config.deduplication);
+    
+    // Initialize debug emitter if enabled
+    this.serviceId = `rpc-server:${config.queueName}:${Date.now()}`;
+    if (config.debug?.enabled) {
+      this.debugEmitter = new DebugEmitter(this.serviceId);
+    }
   }
 
   /**
@@ -370,6 +386,19 @@ export class RpcServer {
         correlationId,
       });
 
+      // Debug: Emit message received event
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageReceived({
+          id: msg.properties.messageId || correlationId || 'unknown',
+          type: 'rpc-request',
+          queue: this.config.queueName,
+          command: request.command,
+          correlationId: correlationId || '',
+          payload: request.data,
+          metadata: request.metadata,
+        });
+      }
+
       // Find handler
       const handler = this.handlers.get(request.command.toUpperCase());
 
@@ -418,6 +447,16 @@ export class RpcServer {
       // Check for slow message
       this.checkSlowMessage(request.command, duration, correlationId, request.metadata);
 
+      // Debug: Emit message success event
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageSuccess({
+          id: msg.properties.messageId || correlationId || 'unknown',
+          command: request.command,
+          duration,
+          response: result,
+        });
+      }
+
       // Send success response
       if (replyTo) {
         const response: ResponseEnvelope = {
@@ -446,6 +485,22 @@ export class RpcServer {
       }
     } catch (error) {
       this.logger.error('Error handling request', error as Error);
+
+      // Debug: Emit message error event
+      const errorObj = error as Error;
+      
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageError({
+          id: msg.properties.messageId || correlationId || 'unknown',
+          command: 'unknown', // We might not have parsed the command yet
+          duration: 0,
+          error: {
+            code: errorObj.name || 'HANDLER_ERROR',
+            message: errorObj.message,
+            stack: errorObj.stack,
+          },
+        });
+      }
 
       // Track error metrics
       if (this.config.metrics) {
@@ -783,5 +838,20 @@ export class RpcServer {
         throw error;
       }
     }
+  }
+
+  /**
+   * Get debug emitter for connecting to DebugServer
+   * @returns DebugEmitter instance or null if debug is disabled
+   */
+  getDebugEmitter(): DebugEmitter | null {
+    return this.debugEmitter;
+  }
+
+  /**
+   * Get service ID for debug tracking
+   */
+  getServiceId(): string {
+    return this.serviceId;
   }
 }

@@ -13,6 +13,8 @@ import {
   JsonSerializer,
   MetricsCollector,
 } from '../../core';
+import { DebugEmitter } from '../../debug/DebugEmitter';
+import type { DebugConfig } from '../../debug/types';
 
 /**
  * RPC Client configuration
@@ -33,6 +35,10 @@ export interface RpcClientConfig {
    * Default: false
    */
   enableMetrics?: boolean;
+  /**
+   * Debug UI configuration
+   */
+  debug?: DebugConfig;
 }
 
 /**
@@ -64,7 +70,7 @@ const DEFAULT_CONFIG = {
  * Required RPC client configuration with defaults applied
  */
 type RequiredRpcClientConfig = Required<
-  Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>
+  Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer' | 'debug'>
 > & {
   metrics?: MetricsCollector;
 };
@@ -102,6 +108,8 @@ export class RpcClient {
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private debugEmitter: DebugEmitter | null = null;
+  private serviceId: string;
 
   /**
    * Create a new RPC client instance
@@ -118,6 +126,12 @@ export class RpcClient {
     this.connectionManager = ConnectionManager.getInstance(config.connection);
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
+
+    // Initialize debug emitter if enabled
+    this.serviceId = `rpc-client:${config.queueName}:${Date.now()}`;
+    if (config.debug?.enabled) {
+      this.debugEmitter = new DebugEmitter(this.serviceId);
+    }
 
     // Start periodic cleanup of expired callbacks
     this.startCleanupInterval();
@@ -304,6 +318,18 @@ export class RpcClient {
           correlationId,
           queueName: this.config.queueName,
         });
+
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageReceived({
+            id: messageId,
+            type: 'rpc-request',
+            queue: this.config.queueName,
+            command: command.toUpperCase(),
+            correlationId,
+            payload: data,
+            metadata: options?.metadata,
+          });
+        }
       } catch (error) {
         clearTimeout(timeoutHandle);
         this.pendingRequests.delete(correlationId);
@@ -361,6 +387,15 @@ export class RpcClient {
           );
         }
 
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageSuccess({
+            id: msg.properties.messageId || correlationId,
+            command: 'response', // We don't have the original command here
+            duration: duration * 1000, // Convert back to ms
+            response: response.data,
+          });
+        }
+
         pending.resolve(response.data);
       } else {
         // Track failed RPC request
@@ -386,6 +421,21 @@ export class RpcClient {
         const error = new Error(response.error?.message || 'Unknown error');
         error.name = response.error?.code || 'RPC_ERROR';
         (error as any).details = response.error?.details;
+        
+        // Debug: Emit message error event
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageError({
+            id: msg.properties.messageId || correlationId,
+            command: 'response',
+            duration: duration * 1000,
+            error: {
+              code: error.name,
+              message: error.message,
+              context: (error as any).details,
+            },
+          });
+        }
+        
         pending.reject(error);
       }
     } catch (error) {
@@ -492,5 +542,19 @@ export class RpcClient {
 
     this.isReady = false;
     this.logger.info('RpcClient closed');
+  }
+
+  /**
+   * Get debug emitter for connecting to DebugServer
+   */
+  getDebugEmitter(): DebugEmitter | null {
+    return this.debugEmitter;
+  }
+
+  /**
+   * Get service ID for debug tracking
+   */
+  getServiceId(): string {
+    return this.serviceId;
   }
 }
