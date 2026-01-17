@@ -11,6 +11,8 @@ import {
   type RetryConfig,
   MetricsCollector,
 } from '../../core';
+import { DebugEmitter } from '../../debug/DebugEmitter';
+import type { DebugConfig } from '../../debug/types';
 
 /**
  * Publisher configuration
@@ -50,6 +52,10 @@ export interface PublisherConfig {
    * Default: false
    */
   enableMetrics?: boolean;
+  /**
+   * Debug UI configuration
+   */
+  debug?: DebugConfig;
 }
 
 /**
@@ -88,7 +94,10 @@ const DEFAULT_CONFIG = {
  * Required publisher configuration with defaults applied
  */
 type RequiredPublisherConfig = Required<
-  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
+  Omit<
+    PublisherConfig,
+    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode' | 'debug'
+  >
 > & {
   exchanges?: PublisherConfig['exchanges'];
   exchange?: string;
@@ -127,6 +136,8 @@ export class Publisher {
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
   private writeBuffer: Array<() => Promise<void>> = [];
   private isWriting = false;
+  private debugEmitter: DebugEmitter | null = null;
+  private serviceId: string;
 
   /**
    * Create a new Publisher instance
@@ -158,6 +169,12 @@ export class Publisher {
       heartbeat: this.config.connection.heartbeat,
       logger: this.config.logger,
     });
+
+    // Initialize debug emitter if enabled
+    this.serviceId = `publisher:${config.exchange || config.defaultExchange || 'default'}:${Date.now()}`;
+    if (config.debug?.enabled) {
+      this.debugEmitter = new DebugEmitter(this.serviceId);
+    }
 
     // Store default exchange type
     if (this.config.exchange) {
@@ -231,6 +248,18 @@ export class Publisher {
 
     const payload = this.config.serializer.encode(envelope);
 
+    if (this.debugEmitter) {
+      this.debugEmitter.emitMessageReceived({
+        id: messageId,
+        type: 'pubsub-publish',
+        queue: exchange,
+        command: eventName,
+        correlationId: messageId,
+        payload: data,
+        metadata: options.metadata,
+      });
+    }
+
     const publishOperation = async () => {
       try {
         const published = channel.publish(exchange, routingKey, payload, {
@@ -268,6 +297,14 @@ export class Publisher {
           );
         }
 
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageSuccess({
+            id: messageId,
+            command: eventName,
+            duration: Date.now() - timestamp,
+          });
+        }
+
         this.config.logger.debug(`Published event "${eventName}" to ${exchange}/${routingKey}`, {
           messageId,
         });
@@ -283,6 +320,20 @@ export class Publisher {
             },
             1
           );
+        }
+
+        const errorObj = error instanceof Error ? error : new Error('Unknown error');
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageError({
+            id: messageId,
+            command: eventName,
+            duration: Date.now() - timestamp,
+            error: {
+              code: 'PUBLISH_ERROR',
+              message: errorObj.message,
+              stack: errorObj.stack,
+            },
+          });
         }
 
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -355,6 +406,20 @@ export class Publisher {
       this.channel = undefined;
     }
     await this.connectionManager.close();
+  }
+
+  /**
+   * Get debug emitter for connecting to DebugServer
+   */
+  getDebugEmitter(): DebugEmitter | null {
+    return this.debugEmitter;
+  }
+
+  /**
+   * Get service ID for debug tracking
+   */
+  getServiceId(): string {
+    return this.serviceId;
   }
 
   /**

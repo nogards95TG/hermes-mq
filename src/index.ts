@@ -30,6 +30,28 @@ export {
   MetricsCollector,
 } from './core';
 
+// ============================================================================
+// DEBUG - Web UI for Application-Level Monitoring
+// ============================================================================
+
+/**
+ * Debug Web UI for real-time application monitoring
+ * Zero-dependency dashboard for debugging RPC/Pub-Sub messages
+ */
+export { DebugServer, DebugEmitter, MessageStore } from './debug';
+
+export type {
+  DebugConfig,
+  DebugMessage,
+  DebugError,
+  DebugStats,
+  DebugHandlerPerformance,
+  DebugConnectionHealth,
+  DebugServiceInfo,
+  DebugEvent,
+  DebugEventType,
+} from './debug';
+
 export type {
   ConnectionConfig,
   ChannelPoolConfig,

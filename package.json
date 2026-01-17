@@ -57,11 +57,13 @@
     "publish:npm": "npm publish"
   },
   "dependencies": {
-    "amqplib": "^0.10.4"
+    "amqplib": "^0.10.4",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.5",
     "@types/node": "^20.11.5",
+    "@types/ws": "^8.5.13",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
     "@vitest/coverage-v8": "^1.2.1",

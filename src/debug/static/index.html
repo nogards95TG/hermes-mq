@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes MQ Debug Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">H</div>
+        <span class="sidebar-title">Hermes MQ</span>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-label">Monitoring</div>
+          <div class="nav-item active" data-view="overview">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <span class="nav-text">Overview</span>
+          </div>
+          <div class="nav-item" data-view="live">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            <span class="nav-text">Live Messages</span>
+          </div>
+          <div class="nav-item" data-view="history">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/>
+            </svg>
+            <span class="nav-text">History</span>
+          </div>
+        </div>
+        
+        <div class="nav-section">
+          <div class="nav-label">Debug</div>
+          <div class="nav-item" data-view="handlers">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+            </svg>
+            <span class="nav-text">Handlers</span>
+          </div>
+          <div class="nav-item" data-view="events">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            <span class="nav-text">Event Stream</span>
+          </div>
+        </div>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <button class="collapse-btn" id="collapseBtn">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/>
+          </svg>
+          <span class="nav-text">Collapse</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <header class="header">
+        <h1 class="header-title" id="headerTitle">Overview</h1>
+        <div class="header-actions">
+          <div class="status-badge" id="connectionStatus">
+            <span class="status-dot"></span>
+            <span>Connecting...</span>
+          </div>
+          <button class="btn btn-outline" id="pauseBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+            </svg>
+            Pause
+          </button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- Overview View -->
+        <div class="view active" id="view-overview" style="overflow-y: auto;">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-header">
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span class="stat-label">Avg Latency</span>
+              </div>
+              <div class="stat-value blue" id="stat-latency">-<span class="stat-unit">ms</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header">
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                <span class="stat-label">Total Messages</span>
+              </div>
+              <div class="stat-value green" id="stat-total">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header">
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span class="stat-label">Error Rate</span>
+              </div>
+              <div class="stat-value red" id="stat-errors">0<span class="stat-unit">%</span></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-header">
+                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                <span class="stat-label">Connected Services</span>
+              </div>
+              <div class="stat-value" id="stat-services">0</div>
+            </div>
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Latency (ms)
+              </div>
+              <canvas class="chart-canvas" id="chart-latency"></canvas>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                Message Rate (msg/s)
+              </div>
+              <canvas class="chart-canvas" id="chart-throughput"></canvas>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+                </svg>
+                Errors & Slow Requests
+              </div>
+              <canvas class="chart-canvas" id="chart-errors"></canvas>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Connected Services</span>
+            </div>
+            <div class="services-grid" id="services-list">
+              <div style="padding: 20px; text-align: center; color: #666;">No services connected</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Recent Messages</span>
+            </div>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Command</th>
+                    <th>Queue</th>
+                    <th>Latency</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="recent-messages">
+                  <tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">No messages yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Messages View -->
+        <div class="view" id="view-live">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Live Message Stream</span>
+              <div class="filters">
+                <div class="filter-group" id="status-filter">
+                  <button class="filter-btn active" data-status="all">All</button>
+                  <button class="filter-btn" data-status="success">Success</button>
+                  <button class="filter-btn" data-status="error">Error</button>
+                  <button class="filter-btn" data-status="timeout">Timeout</button>
+                </div>
+                <input type="text" class="search-input" placeholder="Filter by command or queue..." id="message-search">
+              </div>
+            </div>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Command</th>
+                    <th>Queue</th>
+                    <th>Latency</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="live-messages">
+                  <tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">No messages yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- History View -->
+        <div class="view" id="view-history">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Message History</span>
+              <div class="header-actions">
+                <button class="btn btn-outline" id="export-btn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  Export JSON
+                </button>
+                <button class="btn btn-danger" id="clear-btn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Command</th>
+                    <th>Queue</th>
+                    <th>Latency</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="history-messages">
+                  <tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">No messages yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Handlers View -->
+        <div class="view" id="view-handlers">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Handler Performance</span>
+            </div>
+            <div class="handlers-grid" id="handlers-list">
+              <div style="padding: 20px; text-align: center; color: #666;">No handler data available</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Events View -->
+        <div class="view" id="view-events">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Event Stream</span>
+            </div>
+            <div id="event-stream" style="flex: 1; overflow-y: auto; min-height: 0;">
+              <div style="padding: 20px; text-align: center; color: #666;">No events yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Message Details Panel -->
+    <div class="message-details" id="message-details">
+      <div class="details-header">
+        <span class="panel-title">Message Details</span>
+        <button class="close-btn" id="close-details">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="details-content" id="details-content"></div>
+    </div>
+
+    <div class="overlay" id="overlay"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
