@@ -13,6 +13,7 @@ import {
   DeduplicationOptions,
   SlowMessageDetectionOptions,
   MetricsCollector,
+  ConsumerReconnectionManager,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
@@ -128,9 +129,7 @@ export class RpcServer {
   private inFlightMessages = new Set<string>();
   private messageParser: MessageParser;
   private deduplicator: MessageDeduplicator;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectionManager: ConsumerReconnectionManager;
 
   /**
    * Create a new RPC server instance
@@ -155,6 +154,9 @@ export class RpcServer {
     this.serializer = config.serializer || new JsonSerializer();
     this.messageParser = new MessageParser(this.config.messageValidation);
     this.deduplicator = new MessageDeduplicator(this.config.deduplication);
+    this.reconnectionManager = new ConsumerReconnectionManager({
+      logger: this.logger,
+    });
   }
 
   /**
@@ -272,6 +274,9 @@ export class RpcServer {
       this.consumerTag = consumer.consumerTag;
       this.isRunning = true;
 
+      // Reset reconnection manager on successful start
+      this.reconnectionManager.reset();
+
       this.logger.info('RpcServer started', {
         queueName: this.config.queueName,
         prefetch: this.config.prefetch,
@@ -312,6 +317,9 @@ export class RpcServer {
 
       this.consumerTag = consumer.consumerTag;
       this.isRunning = true;
+
+      // Reset reconnection manager on successful re-registration
+      this.reconnectionManager.reset();
 
       this.logger.info('Consumer re-registered successfully');
     } catch (error) {
@@ -676,38 +684,9 @@ export class RpcServer {
    * Schedule consumer reconnection after cancellation
    */
   private async scheduleConsumerReconnect(): Promise<void> {
-    if (this.reconnectTimer) {
-      return;
-    }
-
-    this.reconnectAttempts++;
-
-    if (this.reconnectAttempts > this.maxReconnectAttempts) {
-      this.logger.error('Max consumer reconnection attempts reached');
-      return;
-    }
-
-    const baseDelay = 5000;
-    const exponentialDelay = baseDelay * Math.pow(2, this.reconnectAttempts - 1);
-    const delay = Math.min(exponentialDelay, 60000);
-
-    this.logger.info(
-      `Scheduling consumer reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`,
-      {
-        delay,
-      }
-    );
-
-    this.reconnectTimer = setTimeout(async () => {
-      this.reconnectTimer = null;
-      try {
-        await this.reRegisterConsumer();
-        this.reconnectAttempts = 0;
-      } catch (error) {
-        this.logger.error('Failed to reconnect consumer', error as Error);
-        await this.scheduleConsumerReconnect();
-      }
-    }, delay);
+    await this.reconnectionManager.scheduleReconnect(async () => {
+      await this.reRegisterConsumer();
+    });
   }
 
   /**
@@ -819,11 +798,8 @@ export class RpcServer {
     }
 
     try {
-      // Clear reconnect timer if exists
-      if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
+      // Cancel any pending reconnection attempts
+      this.reconnectionManager.cancel();
 
       // Stop consuming new messages
       if (this.consumerTag && this.channel) {

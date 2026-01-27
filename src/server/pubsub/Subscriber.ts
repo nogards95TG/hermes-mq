@@ -12,6 +12,7 @@ import {
   MessageValidationOptions,
   SlowMessageDetectionOptions,
   MetricsCollector,
+  ConsumerReconnectionManager,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 
@@ -174,9 +175,7 @@ export class Subscriber {
   private running = false;
   private generatedQueueName?: string;
   private messageParser: MessageParser;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectionManager: ConsumerReconnectionManager;
   private inFlightMessages = new Set<string>();
 
   /**
@@ -204,6 +203,9 @@ export class Subscriber {
     } as any;
 
     this.messageParser = new MessageParser(this.config.messageValidation);
+    this.reconnectionManager = new ConsumerReconnectionManager({
+      logger: this.config.logger,
+    });
 
     // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
@@ -310,6 +312,9 @@ export class Subscriber {
     this.consumerTag = consumeResult.consumerTag;
     this.running = true;
 
+    // Reset reconnection manager on successful start
+    this.reconnectionManager.reset();
+
     this.config.logger.info(`Subscriber started on queue ${this.generatedQueueName}`);
   }
 
@@ -317,38 +322,9 @@ export class Subscriber {
    * Schedule consumer reconnection after cancellation
    */
   private async scheduleConsumerReconnect(): Promise<void> {
-    if (this.reconnectTimer) {
-      return;
-    }
-
-    this.reconnectAttempts++;
-
-    if (this.reconnectAttempts > this.maxReconnectAttempts) {
-      this.config.logger.error('Max consumer reconnection attempts reached');
-      return;
-    }
-
-    const baseDelay = 5000;
-    const exponentialDelay = baseDelay * Math.pow(2, this.reconnectAttempts - 1);
-    const delay = Math.min(exponentialDelay, 60000);
-
-    this.config.logger.info(
-      `Scheduling consumer reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`,
-      {
-        delay,
-      }
-    );
-
-    this.reconnectTimer = setTimeout(async () => {
-      this.reconnectTimer = null;
-      try {
-        await this.reRegisterConsumer();
-        this.reconnectAttempts = 0;
-      } catch (error) {
-        this.config.logger.error('Failed to reconnect consumer', error as Error);
-        await this.scheduleConsumerReconnect();
-      }
-    }, delay);
+    await this.reconnectionManager.scheduleReconnect(async () => {
+      await this.reRegisterConsumer();
+    });
   }
 
   /**
@@ -362,11 +338,8 @@ export class Subscriber {
       return;
     }
 
-    // Clear reconnect timer if exists
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    // Cancel any pending reconnection attempts
+    this.reconnectionManager.cancel();
 
     if (this.channel && this.consumerTag) {
       try {
@@ -485,6 +458,9 @@ export class Subscriber {
 
       this.consumerTag = consumeResult.consumerTag;
       this.running = true;
+
+      // Reset reconnection manager on successful re-registration
+      this.reconnectionManager.reset();
 
       this.config.logger.info('Subscriber consumer re-registered successfully');
     } catch (error) {

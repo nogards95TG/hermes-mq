@@ -67,3 +67,11 @@ export type {
 // Metrics
 export { MetricsCollector } from './metrics/MetricsCollector';
 export type { Labels, MetricType, HistogramConfig } from './metrics/MetricsCollector';
+
+// Utils
+export { ConsumerReconnectionManager } from './utils/ConsumerReconnectionManager';
+export type {
+  ConsumerReconnectionConfig,
+  ReconnectionResult,
+  ReconnectCallback,
+} from './utils/ConsumerReconnectionManager';
