@@ -314,159 +314,242 @@ export class RpcServer {
    * Handle incoming request
    */
   private async handleRequest(msg: amqp.ConsumeMessage | null): Promise<void> {
-    // if message is null, the consumer was cancelled
     if (!msg) {
-      this.logger.warn('Consumer cancelled by server, attempting to re-register');
-      this.isRunning = false;
-      await this.scheduleConsumerReconnect();
+      await this.handleConsumerCancellation();
       return;
     }
 
     if (!this.channel) return;
 
-    const correlationId = msg.properties.correlationId;
-    const replyTo = msg.properties.replyTo;
+    const { correlationId, replyTo } = msg.properties;
+    this.trackInFlightMessage(correlationId);
 
-    // Track in-flight message
+    try {
+      const request = await this.parseAndValidateMessage(msg);
+      if (!request) return;
+
+      const handler = this.findHandler(request.command);
+      const startTime = Date.now();
+
+      const { result } = await this.executeWithDeduplication(msg, request, handler);
+      const duration = Date.now() - startTime;
+
+      this.collectMetrics(request.command, duration, 'success', correlationId, request.metadata);
+
+      await this.sendSuccessResponse(request, result, correlationId, replyTo);
+      this.acknowledgeMessage(msg);
+    } catch (error) {
+      this.logger.error('Error handling request', error as Error);
+      this.collectMetrics('unknown', 0, 'error');
+      await this.handleRequestError(msg, error, correlationId, replyTo);
+    } finally {
+      this.untrackInFlightMessage(correlationId);
+    }
+  }
+
+  /**
+   * Handle consumer cancellation by server
+   */
+  private async handleConsumerCancellation(): Promise<void> {
+    this.logger.warn('Consumer cancelled by server, attempting to re-register');
+    this.isRunning = false;
+    await this.scheduleConsumerReconnect();
+  }
+
+  /**
+   * Track in-flight message
+   */
+  private trackInFlightMessage(correlationId: string | undefined): void {
     if (correlationId) {
       this.inFlightMessages.add(correlationId);
     }
+  }
 
-    try {
-      // Parse and validate request
-      const parseResult = await this.messageParser.parse(msg);
+  /**
+   * Remove message from in-flight tracking
+   */
+  private untrackInFlightMessage(correlationId: string | undefined): void {
+    if (correlationId) {
+      this.inFlightMessages.delete(correlationId);
+    }
+  }
 
-      if (!parseResult.success) {
-        this.logger.error('Received malformed message', parseResult.error, {
-          correlationId,
-          strategy: parseResult.strategy,
-        });
+  /**
+   * Parse and validate incoming message
+   * Returns null if message was handled (ACK/NACK already sent)
+   */
+  private async parseAndValidateMessage(
+    msg: amqp.ConsumeMessage
+  ): Promise<RequestEnvelope | null> {
+    if (!this.channel) return null;
 
-        switch (parseResult.strategy) {
-          case 'reject':
-            // NACK without requeue - sends to DLQ
-            await this.channel.nack(msg, false, false);
-            break;
-          case 'dlq':
-            // For now just NACK (DLQ handler in ConnectionManager)
-            await this.channel.nack(msg, false, false);
-            break;
-          case 'ignore':
-            // ACK and ignore
-            await this.channel.ack(msg);
-            break;
-        }
-        return;
-      }
+    const correlationId = msg.properties.correlationId;
+    const parseResult = await this.messageParser.parse(msg);
 
-      const request: RequestEnvelope = parseResult.data;
+    if (!parseResult.success) {
+      this.logger.error('Received malformed message', parseResult.error, {
+        correlationId,
+        strategy: parseResult.strategy,
+      });
 
-      if (!request.command) {
-        throw new ValidationError('Command is required in request');
-      }
+      const strategy = parseResult.strategy || 'dlq';
+      await this.handleMalformedMessage(msg, strategy);
+      return null;
+    }
 
-      this.logger.debug('Received RPC request', {
+    const request: RequestEnvelope = parseResult.data;
+
+    if (!request.command) {
+      throw new ValidationError('Command is required in request');
+    }
+
+    this.logger.debug('Received RPC request', {
+      command: request.command,
+      correlationId,
+    });
+
+    return request;
+  }
+
+  /**
+   * Handle malformed message according to strategy
+   */
+  private async handleMalformedMessage(
+    msg: amqp.ConsumeMessage,
+    strategy: 'reject' | 'dlq' | 'ignore'
+  ): Promise<void> {
+    if (!this.channel) return;
+
+    switch (strategy) {
+      case 'reject':
+      case 'dlq':
+        await this.channel.nack(msg, false, false);
+        break;
+      case 'ignore':
+        await this.channel.ack(msg);
+        break;
+    }
+  }
+
+  /**
+   * Find handler for command
+   */
+  private findHandler(command: string): RpcHandler {
+    const normalizedCommand = command.toUpperCase();
+    const handler = this.handlers.get(normalizedCommand);
+
+    if (!handler) {
+      throw new Error(`No handler registered for command: ${command}`);
+    }
+
+    return handler;
+  }
+
+  /**
+   * Execute handler with deduplication check
+   */
+  private async executeWithDeduplication(
+    msg: amqp.ConsumeMessage,
+    request: RequestEnvelope,
+    handler: RpcHandler
+  ): Promise<{ result: any; duplicate: boolean }> {
+    const correlationId = msg.properties.correlationId;
+
+    const deduplicationResult = await this.deduplicator.process(msg, async () => {
+      return await handler(request.data, request.metadata);
+    });
+
+    if (deduplicationResult.duplicate) {
+      this.logger.debug('Skipped duplicate request', {
         command: request.command,
         correlationId,
       });
+    }
 
-      // Find handler
-      const handler = this.handlers.get(request.command.toUpperCase());
+    return {
+      result: deduplicationResult.result,
+      duplicate: deduplicationResult.duplicate,
+    };
+  }
 
-      if (!handler) {
-        throw new Error(`No handler registered for command: ${request.command}`);
-      }
+  /**
+   * Collect metrics for message processing
+   */
+  private collectMetrics(
+    command: string,
+    duration: number,
+    status: 'success' | 'error',
+    correlationId?: string,
+    metadata?: Record<string, any>
+  ): void {
+    if (this.config.metrics) {
+      this.config.metrics.incrementCounter(
+        'hermes_messages_consumed_total',
+        {
+          queue: this.config.queueName,
+          command,
+          status: status === 'success' ? 'ack' : 'error',
+        },
+        1
+      );
 
-      // Check for duplicate (if enabled)
-      const startTime = Date.now();
-      const deduplicationResult = await this.deduplicator.process(msg, async () => {
-        // Execute handler
-        return await handler(request.data, request.metadata);
-      });
-
-      if (deduplicationResult.duplicate) {
-        this.logger.debug('Skipped duplicate request', {
-          command: request.command,
-          correlationId,
-        });
-      }
-
-      const result = deduplicationResult.result;
-      const duration = Date.now() - startTime;
-
-      // Track metrics
-      if (this.config.metrics) {
-        this.config.metrics.incrementCounter(
-          'hermes_messages_consumed_total',
-          {
-            queue: this.config.queueName,
-            command: request.command,
-            status: 'ack',
-          },
-          1
-        );
+      if (status === 'success') {
         this.config.metrics.observeHistogram(
           'hermes_message_processing_duration_seconds',
           {
             queue: this.config.queueName,
-            command: request.command,
+            command,
           },
-          duration / 1000 // Convert to seconds
+          duration / 1000
         );
       }
+    }
 
-      // Check for slow message
-      this.checkSlowMessage(request.command, duration, correlationId, request.metadata);
+    // Check for slow messages regardless of metrics being enabled
+    if (status === 'success') {
+      this.checkSlowMessage(command, duration, correlationId, metadata);
+    }
+  }
 
-      // Send success response
-      if (replyTo) {
-        const response: ResponseEnvelope = {
-          id: request.id,
-          timestamp: Date.now(),
-          success: true,
-          data: result,
-        };
+  /**
+   * Send success response to client
+   */
+  private async sendSuccessResponse(
+    request: RequestEnvelope,
+    result: any,
+    correlationId: string | undefined,
+    replyTo: string | undefined
+  ): Promise<void> {
+    if (!replyTo || !this.channel) return;
 
-        const content = this.serializer.encode(response);
+    const response: ResponseEnvelope = {
+      id: request.id,
+      timestamp: Date.now(),
+      success: true,
+      data: result,
+    };
 
-        this.channel.sendToQueue(replyTo, content, {
-          correlationId,
-          contentType: 'application/json',
-        });
+    const content = this.serializer.encode(response);
 
-        this.logger.debug('Sent success response', {
-          command: request.command,
-          correlationId,
-        });
-      }
+    this.channel.sendToQueue(replyTo, content, {
+      correlationId,
+      contentType: 'application/json',
+    });
 
-      // Acknowledge message
-      if (this.config.ackStrategy.mode === 'auto') {
-        this.channel.ack(msg);
-      }
-    } catch (error) {
-      this.logger.error('Error handling request', error as Error);
+    this.logger.debug('Sent success response', {
+      command: request.command,
+      correlationId,
+    });
+  }
 
-      // Track error metrics
-      if (this.config.metrics) {
-        this.config.metrics.incrementCounter(
-          'hermes_messages_consumed_total',
-          {
-            queue: this.config.queueName,
-            command: 'unknown',
-            status: 'error',
-          },
-          1
-        );
-      }
+  /**
+   * Acknowledge message if auto mode is enabled
+   */
+  private acknowledgeMessage(msg: amqp.ConsumeMessage): void {
+    if (!this.channel) return;
 
-      // Handle retry logic
-      await this.handleRequestError(msg, error, correlationId, replyTo);
-    } finally {
-      // Remove from in-flight
-      if (correlationId) {
-        this.inFlightMessages.delete(correlationId);
-      }
+    if (this.config.ackStrategy.mode === 'auto') {
+      this.channel.ack(msg);
     }
   }
 
