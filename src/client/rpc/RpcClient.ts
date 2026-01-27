@@ -11,6 +11,7 @@ import {
   Serializer,
   JsonSerializer,
   MetricsCollector,
+  TIME,
 } from '../../core';
 
 /**
@@ -52,7 +53,7 @@ interface PendingRequest<T> {
  * Default RPC client configuration
  */
 const DEFAULT_CONFIG = {
-  timeout: 30000,
+  timeout: TIME.DEFAULT_RPC_TIMEOUT_MS,
   publisherConfirms: true,
   persistent: false,
   assertQueue: true,
@@ -428,10 +429,10 @@ export class RpcClient {
    * Start periodic cleanup of expired pending requests
    */
   private startCleanupInterval(): void {
-    // Run cleanup every 30 seconds
+    // Run cleanup periodically to remove expired requests
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredRequests();
-    }, 30000);
+    }, TIME.RPC_CLIENT_CLEANUP_INTERVAL_MS);
 
     // Prevent the interval from keeping the process alive
     if (this.cleanupInterval.unref) {

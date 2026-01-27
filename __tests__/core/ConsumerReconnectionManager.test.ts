@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ConsumerReconnectionManager } from '../../src/core/utils/ConsumerReconnectionManager';
 import { ConsoleLogger } from '../../src/core/types/Logger';
+import { TIME, LIMITS } from '../../src/core/constants';
 
 describe('ConsumerReconnectionManager', () => {
   let manager: ConsumerReconnectionManager;
@@ -29,12 +30,12 @@ describe('ConsumerReconnectionManager', () => {
       // First attempt
       manager.scheduleReconnect(reconnectCallback);
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Scheduling consumer reconnection attempt 1/5'),
-        expect.objectContaining({ delay: 5000 })
+        expect.stringContaining(`Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.objectContaining({ delay: TIME.CONSUMER_RECONNECT_BASE_DELAY_MS })
       );
 
       // Advance time to trigger first reconnect
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS);
       expect(reconnectCallback).toHaveBeenCalledTimes(1);
       expect(manager.getAttemptCount()).toBe(0); // Reset after success
     });
@@ -51,19 +52,19 @@ describe('ConsumerReconnectionManager', () => {
 
       // First attempt
       manager.scheduleReconnect(reconnectCallback);
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS);
       expect(reconnectCallback).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Failed to reconnect consumer',
         expect.any(Error)
       );
 
-      // Second attempt (10s delay)
-      await vi.advanceTimersByTimeAsync(10000);
+      // Second attempt (10s delay = baseDelay * 2^1)
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 2);
       expect(reconnectCallback).toHaveBeenCalledTimes(2);
 
-      // Third attempt (20s delay) - should succeed
-      await vi.advanceTimersByTimeAsync(20000);
+      // Third attempt (20s delay = baseDelay * 2^2) - should succeed
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 4);
       expect(reconnectCallback).toHaveBeenCalledTimes(3);
       expect(manager.getAttemptCount()).toBe(0); // Reset after success
     });
@@ -73,27 +74,27 @@ describe('ConsumerReconnectionManager', () => {
 
       // First attempt
       manager.scheduleReconnect(reconnectCallback);
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS);
       expect(reconnectCallback).toHaveBeenCalledTimes(1);
 
       // Attempt 2
-      await vi.advanceTimersByTimeAsync(10000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 2);
       expect(reconnectCallback).toHaveBeenCalledTimes(2);
 
       // Attempt 3
-      await vi.advanceTimersByTimeAsync(20000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 4);
       expect(reconnectCallback).toHaveBeenCalledTimes(3);
 
       // Attempt 4
-      await vi.advanceTimersByTimeAsync(40000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 8);
       expect(reconnectCallback).toHaveBeenCalledTimes(4);
 
       // Attempt 5
-      await vi.advanceTimersByTimeAsync(60000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_MAX_DELAY_MS);
       expect(reconnectCallback).toHaveBeenCalledTimes(5);
 
       // Should not attempt again
-      await vi.advanceTimersByTimeAsync(60000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_MAX_DELAY_MS);
       expect(reconnectCallback).toHaveBeenCalledTimes(5); // Still 5
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Max consumer reconnection attempts')
@@ -118,24 +119,25 @@ describe('ConsumerReconnectionManager', () => {
     it('should respect max delay cap', async () => {
       const reconnectCallback = vi.fn().mockRejectedValue(new Error('Connection failed'));
 
+      const customMaxDelay = 30_000;
       manager = new ConsumerReconnectionManager({
         logger: mockLogger,
-        baseDelay: 5000,
-        maxDelay: 30000,
+        baseDelay: TIME.CONSUMER_RECONNECT_BASE_DELAY_MS,
+        maxDelay: customMaxDelay,
       });
 
       // Attempts 1-4 would naturally be 5s, 10s, 20s, 40s
       // But 40s should be capped to 30s
 
       manager.scheduleReconnect(reconnectCallback);
-      await vi.advanceTimersByTimeAsync(5000); // Attempt 1
-      await vi.advanceTimersByTimeAsync(10000); // Attempt 2
-      await vi.advanceTimersByTimeAsync(20000); // Attempt 3
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS); // Attempt 1
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 2); // Attempt 2
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 4); // Attempt 3
 
       // Attempt 4 should be capped to 30s instead of 40s
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Scheduling consumer reconnection attempt 4/5'),
-        expect.objectContaining({ delay: 30000 })
+        expect.stringContaining(`Scheduling consumer reconnection attempt 4/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.objectContaining({ delay: customMaxDelay })
       );
     });
   });
@@ -224,16 +226,16 @@ describe('ConsumerReconnectionManager', () => {
       expect(manager.getAttemptCount()).toBe(0);
 
       manager.scheduleReconnect(reconnectCallback);
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS);
       // After first attempt and auto-scheduled retry, count should be 1 before the retry timer executes
       // The count increments when scheduleReconnect is called, not when the callback runs
       expect(manager.getAttemptCount()).toBeGreaterThanOrEqual(1);
 
-      await vi.advanceTimersByTimeAsync(10000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 2);
       expect(manager.getAttemptCount()).toBeGreaterThanOrEqual(2);
 
       // Third attempt should succeed and reset
-      await vi.advanceTimersByTimeAsync(20000);
+      await vi.advanceTimersByTimeAsync(TIME.CONSUMER_RECONNECT_BASE_DELAY_MS * 4);
       expect(manager.getAttemptCount()).toBe(0); // Reset after success
     });
   });
@@ -268,8 +270,8 @@ describe('ConsumerReconnectionManager', () => {
 
       manager.scheduleReconnect(reconnectCallback);
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Scheduling consumer reconnection attempt 1/5'),
-        expect.objectContaining({ delay: 10000 })
+        expect.stringContaining(`Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.objectContaining({ delay: 10_000 })
       );
     });
 

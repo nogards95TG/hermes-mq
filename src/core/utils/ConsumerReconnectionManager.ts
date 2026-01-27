@@ -1,4 +1,5 @@
 import { Logger, SilentLogger } from '../types/Logger';
+import { TIME, LIMITS } from '../constants';
 
 /**
  * Configuration for consumer reconnection behavior
@@ -6,19 +7,19 @@ import { Logger, SilentLogger } from '../types/Logger';
 export interface ConsumerReconnectionConfig {
   /**
    * Maximum number of reconnection attempts before giving up
-   * @default 5
+   * @default LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS (5)
    */
   maxReconnectAttempts?: number;
 
   /**
    * Base delay in milliseconds for the first reconnection attempt
-   * @default 5000
+   * @default TIME.CONSUMER_RECONNECT_BASE_DELAY_MS (5000)
    */
   baseDelay?: number;
 
   /**
    * Maximum delay in milliseconds between reconnection attempts
-   * @default 60000 (1 minute)
+   * @default TIME.CONSUMER_RECONNECT_MAX_DELAY_MS (60000)
    */
   maxDelay?: number;
 
@@ -51,8 +52,8 @@ export type ReconnectCallback = () => Promise<void>;
  * @example
  * ```typescript
  * const reconnectionManager = new ConsumerReconnectionManager({
- *   maxReconnectAttempts: 5,
- *   baseDelay: 5000,
+ *   maxReconnectAttempts: LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS,
+ *   baseDelay: TIME.CONSUMER_RECONNECT_BASE_DELAY_MS,
  *   logger: myLogger
  * });
  *
@@ -81,9 +82,9 @@ export class ConsumerReconnectionManager {
    */
   constructor(config: ConsumerReconnectionConfig = {}) {
     this.config = {
-      maxReconnectAttempts: config.maxReconnectAttempts ?? 5,
-      baseDelay: config.baseDelay ?? 5000,
-      maxDelay: config.maxDelay ?? 60000,
+      maxReconnectAttempts: config.maxReconnectAttempts ?? LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS,
+      baseDelay: config.baseDelay ?? TIME.CONSUMER_RECONNECT_BASE_DELAY_MS,
+      maxDelay: config.maxDelay ?? TIME.CONSUMER_RECONNECT_MAX_DELAY_MS,
       logger: config.logger ?? new SilentLogger(),
     };
   }

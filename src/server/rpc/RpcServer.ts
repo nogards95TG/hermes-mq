@@ -14,6 +14,11 @@ import {
   SlowMessageDetectionOptions,
   MetricsCollector,
   ConsumerReconnectionManager,
+  TIME,
+  LIMITS,
+  RETRY,
+  ACK_MODE,
+  MALFORMED_MESSAGE_STRATEGY,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
@@ -65,24 +70,24 @@ type RequiredRpcServerConfig = Required<
  * Default RPC server configuration
  */
 const DEFAULT_CONFIG = {
-  prefetch: 10, // RabbitMQ recommends a value between 10-50 to balance throughput and fairness
+  prefetch: LIMITS.RPC_SERVER_DEFAULT_PREFETCH, // RabbitMQ recommends a value between 10-50 to balance throughput and fairness
   assertQueue: true,
   enableMetrics: false,
   queueOptions: {
     durable: true,
   },
   ackStrategy: {
-    mode: 'auto' as const,
+    mode: ACK_MODE.AUTO,
     requeue: true,
-    maxRetries: 3,
+    maxRetries: RETRY.DEFAULT_MAX_ATTEMPTS,
   },
   messageValidation: {
-    malformedMessageStrategy: 'dlq' as const,
+    malformedMessageStrategy: MALFORMED_MESSAGE_STRATEGY.DLQ,
   },
   deduplication: {
     enabled: false,
-    cacheTTL: 300000,
-    cacheSize: 10000,
+    cacheTTL: TIME.DEDUPLICATION_CACHE_TTL_MS,
+    cacheSize: LIMITS.DEDUPLICATION_CACHE_SIZE,
   },
   slowMessageDetection: {
     slowThresholds: {},
@@ -790,7 +795,7 @@ export class RpcServer {
    * After calling stop(), the server cannot be restarted.
    */
   async stop(options?: { timeout?: number; force?: boolean }): Promise<void> {
-    const timeout = options?.timeout || 30000;
+    const timeout = options?.timeout || TIME.DEFAULT_SHUTDOWN_TIMEOUT_MS;
 
     if (!this.isRunning) {
       this.logger.warn('RpcServer is not running');

@@ -1,4 +1,5 @@
 import { Logger, SilentLogger } from '../types/Logger';
+import { RETRY } from '../constants';
 
 /**
  * Retry configuration options
@@ -17,9 +18,9 @@ export interface RetryConfig {
  */
 const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
   enabled: true,
-  maxAttempts: 3,
-  initialDelay: 1000,
-  maxDelay: 30000,
+  maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
+  initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS,
+  maxDelay: RETRY.DEFAULT_MAX_DELAY_MS,
   backoffMultiplier: 2,
   retryableErrors: [/ECONNREFUSED/, /ETIMEDOUT/, /ENOTFOUND/, /EHOSTUNREACH/],
 };

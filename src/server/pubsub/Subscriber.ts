@@ -13,6 +13,11 @@ import {
   SlowMessageDetectionOptions,
   MetricsCollector,
   ConsumerReconnectionManager,
+  LIMITS,
+  RETRY,
+  ACK_MODE,
+  MALFORMED_MESSAGE_STRATEGY,
+  EXCHANGE_TYPE,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 
@@ -114,15 +119,19 @@ type RequiredSubscriberConfig = Required<
  * Default subscriber configuration
  */
 const DEFAULT_CONFIG = {
-  exchangeType: 'topic' as const,
+  exchangeType: EXCHANGE_TYPE.TOPIC,
   exchangeOptions: { durable: true },
   queueOptions: { durable: true, exclusive: false, autoDelete: true },
-  prefetch: 10,
+  prefetch: LIMITS.SUBSCRIBER_DEFAULT_PREFETCH,
   enableMetrics: false,
-  retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
-  ackStrategy: { mode: 'auto' as const, requeue: true },
+  retry: {
+    enabled: true,
+    maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
+    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS
+  },
+  ackStrategy: { mode: ACK_MODE.AUTO, requeue: true },
   messageValidation: {
-    malformedMessageStrategy: 'dlq' as const,
+    malformedMessageStrategy: MALFORMED_MESSAGE_STRATEGY.DLQ,
   },
   errorHandling: {
     isolateErrors: false,

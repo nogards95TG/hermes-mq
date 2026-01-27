@@ -10,6 +10,9 @@ import {
   HermesError,
   type RetryConfig,
   MetricsCollector,
+  RETRY,
+  EXCHANGE_TYPE,
+  CONFIRM_MODE,
 } from '../../core';
 
 /**
@@ -72,14 +75,18 @@ interface PublishOptions {
  * Default publisher configuration
  */
 const DEFAULT_CONFIG = {
-  exchangeType: 'topic' as const,
+  exchangeType: EXCHANGE_TYPE.TOPIC,
   persistent: true,
   publisherConfirms: true,
-  confirmMode: 'sync' as const,
+  confirmMode: CONFIRM_MODE.SYNC,
   mandatory: false,
   enableMetrics: false,
-  retry: { enabled: true, maxAttempts: 3, initialDelay: 1000 },
-} as const;
+  retry: {
+    enabled: true,
+    maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
+    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS
+  },
+};
 
 /**
  * Required publisher configuration with defaults applied

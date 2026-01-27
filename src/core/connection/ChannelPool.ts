@@ -1,6 +1,7 @@
 import * as amqp from 'amqplib';
 import { Logger, SilentLogger } from '../types/Logger';
 import { ChannelError } from '../types/Errors';
+import { TIME } from '../constants';
 
 /**
  * Channel pool configuration
@@ -18,8 +19,8 @@ export interface ChannelPoolConfig {
 const DEFAULT_POOL_CONFIG: Required<ChannelPoolConfig> = {
   min: 1,
   max: 10,
-  acquireTimeout: 5000,
-  evictionInterval: 30000,
+  acquireTimeout: TIME.CHANNEL_POOL_ACQUIRE_TIMEOUT_MS,
+  evictionInterval: TIME.CHANNEL_POOL_EVICTION_INTERVAL_MS,
 };
 
 /**
@@ -174,7 +175,7 @@ export class ChannelPool {
     this.pendingAcquires = [];
 
     // Wait for all channels to be released
-    const maxWait = 30000;
+    const maxWait = TIME.CHANNEL_POOL_MAX_WAIT_MS;
     const startTime = Date.now();
     while (this.channels.some((w) => w.inUse)) {
       if (Date.now() - startTime > maxWait) {

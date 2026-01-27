@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import { Logger, SilentLogger } from '../types/Logger';
 import { ConnectionError } from '../types/Errors';
 import type { DLQOptions } from '../types/Messages';
+import { TIME } from '../constants';
 
 /**
  * Connection configuration options
@@ -35,7 +36,7 @@ export interface QueueAssertionOptions {
  */
 const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
   reconnect: true,
-  reconnectInterval: 5000,
+  reconnectInterval: TIME.CONNECTION_RECONNECT_BASE_DELAY_MS,
   maxReconnectAttempts: 10,
   heartbeat: 60,
 };
@@ -220,10 +221,10 @@ export class ConnectionManager extends EventEmitter {
     }
 
     // Exponential backoff: delay = baseInterval * 2^(attempt - 1)
-    // Capped at 60 seconds
+    // Capped at maximum reconnect delay
     const baseInterval = this.config.reconnectInterval;
     const exponentialDelay = baseInterval * Math.pow(2, this.reconnectAttempts - 1);
-    const delay = Math.min(exponentialDelay, 60000);
+    const delay = Math.min(exponentialDelay, TIME.CONNECTION_RECONNECT_MAX_DELAY_MS);
 
     this.logger.info(
       `Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts}`,

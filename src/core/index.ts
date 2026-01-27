@@ -75,3 +75,6 @@ export type {
   ReconnectionResult,
   ReconnectCallback,
 } from './utils/ConsumerReconnectionManager';
+
+// Constants
+export { TIME, LIMITS, RETRY, ACK_MODE, MALFORMED_MESSAGE_STRATEGY, EXCHANGE_TYPE, CONFIRM_MODE } from './constants';
