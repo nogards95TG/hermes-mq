@@ -1,4 +1,4 @@
-import { ConnectionManager, ConnectionConfig } from '../connection/ConnectionManager';
+import { ConnectionManager } from '../connection/ConnectionManager';
 import { RpcServer } from '../../server/rpc/RpcServer';
 import { Subscriber } from '../../server/pubsub/Subscriber';
 
@@ -51,7 +51,10 @@ export interface HealthCheckResult {
  * Health checker configuration
  */
 export interface HealthCheckerConfig {
-  connection: ConnectionConfig;
+  /**
+   * Connection manager instance
+   */
+  connection: ConnectionManager;
   servers?: (RpcServer | Subscriber)[];
 }
 
@@ -63,10 +66,12 @@ export interface HealthCheckerConfig {
  *
  * @example
  * ```typescript
- * import { HealthChecker } from 'hermes-mq';
+ * import { HealthChecker, ConnectionManager } from 'hermes-mq';
+ *
+ * const connection = new ConnectionManager({ url: 'amqp://localhost' });
  *
  * const health = new HealthChecker({
- *   connection: { url: 'amqp://localhost' }
+ *   connection
  * });
  *
  * const result = await health.check();
@@ -90,7 +95,8 @@ export class HealthChecker {
    * @param config - Health checker configuration
    */
   constructor(config: HealthCheckerConfig) {
-    this.connectionManager = ConnectionManager.getInstance(config.connection);
+    // Use the provided ConnectionManager instance
+    this.connectionManager = config.connection;
     this.servers = config.servers || [];
     this.startTime = new Date();
   }

@@ -7,6 +7,7 @@ import {
   Subscriber,
   MetricsCollector,
   TimeoutError,
+  ConnectionManager,
 } from '../../src';
 
 describe('Metrics Integration Tests', () => {
@@ -32,12 +33,16 @@ describe('Metrics Integration Tests', () => {
   });
 
   describe('RpcClient metrics', () => {
+    let connection: ConnectionManager;
+
     it('should track successful RPC requests', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-success',
       });
 
@@ -51,7 +56,7 @@ describe('Metrics Integration Tests', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-success',
         enableMetrics: true,
       });
@@ -76,14 +81,17 @@ describe('Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should track RPC request timeouts', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-timeout',
       });
 
@@ -96,7 +104,7 @@ describe('Metrics Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-timeout',
         timeout: 100, // Very short timeout
         enableMetrics: true,
@@ -118,14 +126,17 @@ describe('Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should track RPC request errors', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-error',
       });
 
@@ -136,7 +147,7 @@ describe('Metrics Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-rpc-metrics-error',
         enableMetrics: true,
       });
@@ -162,16 +173,21 @@ describe('Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
   describe('RpcServer metrics', () => {
+    let connection: ConnectionManager;
+
     it('should track consumed messages and processing duration', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-server-metrics',
         enableMetrics: true,
       });
@@ -184,7 +200,7 @@ describe('Metrics Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-server-metrics',
       });
 
@@ -210,14 +226,17 @@ describe('Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should track server errors', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-server-error-metrics',
         enableMetrics: true,
       });
@@ -229,7 +248,7 @@ describe('Metrics Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-server-error-metrics',
       });
 
@@ -249,16 +268,21 @@ describe('Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
   describe('Publisher metrics', () => {
+    let connection: ConnectionManager;
+
     it('should track published messages', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const publisher = new Publisher({
-        connection: { url: rabbitUrl },
+        connection,
         exchange: 'test-publisher-metrics',
         enableMetrics: true,
       });
@@ -283,17 +307,21 @@ describe('Metrics Integration Tests', () => {
   });
 
   describe('Subscriber metrics', () => {
+    let connection: ConnectionManager;
+
     it('should track consumed events and processing duration', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const publisher = new Publisher({
-        connection: { url: rabbitUrl },
+        connection,
         exchange: 'test-subscriber-metrics',
       });
 
       const subscriber = new Subscriber({
-        connection: { url: rabbitUrl },
+        connection,
         exchange: 'test-subscriber-metrics',
         enableMetrics: true,
       });
@@ -341,13 +369,15 @@ describe('Metrics Integration Tests', () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const publisher = new Publisher({
-        connection: { url: rabbitUrl },
+        connection,
         exchange: 'test-subscriber-error-metrics',
       });
 
       const subscriber = new Subscriber({
-        connection: { url: rabbitUrl },
+        connection,
         exchange: 'test-subscriber-error-metrics',
         errorHandling: {
           isolateErrors: true,
@@ -383,12 +413,17 @@ describe('Metrics Integration Tests', () => {
   });
 
   describe('Shared metrics collector', () => {
+    let connection: ConnectionManager;
+    let connection2: ConnectionManager;
+
     it('should share metrics across multiple components', async () => {
       const metrics = MetricsCollector.global();
       metrics.reset();
 
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'shared-metrics-test',
         enableMetrics: true,
       });
@@ -397,13 +432,15 @@ describe('Metrics Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'shared-metrics-test',
         enableMetrics: true,
       });
 
+      connection2 = new ConnectionManager({ url: rabbitUrl });
+
       const publisher = new Publisher({
-        connection: { url: rabbitUrl },
+        connection: connection2,
         exchange: 'shared-metrics-exchange',
         enableMetrics: true,
       });
@@ -422,6 +459,8 @@ describe('Metrics Integration Tests', () => {
       await client.close();
       await server.stop();
       await publisher.close();
+      await connection.close();
+      await connection2.close();
     });
   });
 });

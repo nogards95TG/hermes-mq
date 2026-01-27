@@ -19,22 +19,22 @@ vi.mock('../../src/core', async () => {
 
   return {
     ...actual,
-    ConnectionManager: {
-      getInstance: vi.fn().mockReturnValue({
-        getConnection: vi.fn().mockResolvedValue(mockConnection),
-        close: vi.fn().mockResolvedValue(undefined),
-      }),
-    },
+    ConnectionManager: vi.fn(() => ({
+      getConnection: vi.fn().mockResolvedValue(mockConnection),
+      close: vi.fn().mockResolvedValue(undefined),
+    })),
   };
 });
 
 describe('Publisher', () => {
   let publisher: Publisher;
   let mockConnection: any;
+  let mockConnectionManager: any;
   let mockChannel: any;
 
   beforeEach(async () => {
-    const manager = (ConnectionManager as any).getInstance();
+    const manager = new (ConnectionManager as any)();
+    mockConnectionManager = manager;
     mockConnection = await manager.getConnection();
     mockChannel = await mockConnection.createConfirmChannel();
   });
@@ -49,28 +49,17 @@ describe('Publisher', () => {
   describe('initialization', () => {
     it('should initialize with valid config', () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
       });
 
       expect(publisher).toBeDefined();
     });
 
-    it('should throw ValidationError without connection URL', () => {
-      expect(() => {
-        new Publisher({
-          connection: { url: '' },
-        });
-      }).toThrow(ValidationError);
-    });
 
     it('should use default exchange if not specified', () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
       });
 
       expect(publisher).toBeDefined();
@@ -78,9 +67,7 @@ describe('Publisher', () => {
 
     it('should accept multiple exchanges configuration', () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchanges: [
           { name: 'events', type: 'topic' },
           { name: 'logs', type: 'fanout' },
@@ -94,9 +81,7 @@ describe('Publisher', () => {
   describe('publish()', () => {
     beforeEach(() => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
       });
     });
@@ -198,9 +183,7 @@ describe('Publisher', () => {
   describe('publishToMany()', () => {
     beforeEach(() => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
       });
     });
 
@@ -261,9 +244,7 @@ describe('Publisher', () => {
   describe('close()', () => {
     it('should close channel and connection', async () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
       });
 
       await publisher.publish('event', {});
@@ -274,9 +255,7 @@ describe('Publisher', () => {
 
     it('should clear asserted exchanges on close', async () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
       });
 
       await publisher.publish('event1', {});
@@ -284,9 +263,7 @@ describe('Publisher', () => {
 
       // Recreate publisher and publish again
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
       });
 
       await publisher.publish('event2', {});
@@ -299,9 +276,7 @@ describe('Publisher', () => {
   describe('pre-configured exchanges', () => {
     it('should assert all configured exchanges on first publish', async () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchanges: [
           { name: 'events', type: 'topic', options: { durable: true } },
           { name: 'logs', type: 'fanout', options: { durable: false } },
@@ -325,9 +300,7 @@ describe('Publisher', () => {
       };
 
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
         enableMetrics: true,
       });
@@ -361,9 +334,7 @@ describe('Publisher', () => {
       });
 
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
       });
     });
@@ -398,9 +369,7 @@ describe('Publisher', () => {
     it('should handle returned messages', async () => {
       const onReturn = vi.fn();
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
         mandatory: true,
         onReturn,
@@ -459,9 +428,7 @@ describe('Publisher', () => {
 
     it('should retry failed publish with exponential backoff', async () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
         retry: {
           enabled: true,
@@ -490,9 +457,7 @@ describe('Publisher', () => {
 
     it('should throw after max retry attempts', async () => {
       publisher = new Publisher({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
         retry: {
           enabled: true,

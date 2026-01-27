@@ -23,22 +23,22 @@ vi.mock('../../src/core', async () => {
 
   return {
     ...actual,
-    ConnectionManager: {
-      getInstance: vi.fn().mockReturnValue({
-        getConnection: vi.fn().mockResolvedValue(mockConnection),
-        close: vi.fn().mockResolvedValue(undefined),
-      }),
-    },
+    ConnectionManager: vi.fn(() => ({
+      getConnection: vi.fn().mockResolvedValue(mockConnection),
+      close: vi.fn().mockResolvedValue(undefined),
+    })),
   };
 });
 
 describe('Subscriber', () => {
   let subscriber: Subscriber;
   let mockConnection: any;
+  let mockConnectionManager: any;
   let mockChannel: any;
 
   beforeEach(async () => {
-    const manager = (ConnectionManager as any).getInstance();
+    const manager = new (ConnectionManager as any)();
+    mockConnectionManager = manager;
     mockConnection = await manager.getConnection();
     mockChannel = await (mockConnection as any).createChannel();
   });
@@ -53,9 +53,7 @@ describe('Subscriber', () => {
   describe('initialization', () => {
     it('should initialize with valid config', () => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
       });
 
@@ -63,19 +61,13 @@ describe('Subscriber', () => {
       expect(subscriber.isRunning()).toBe(false);
     });
 
-    it('should throw ValidationError without connection URL', () => {
-      expect(() => {
-        new Subscriber({
-          connection: { url: '' },
-          exchange: 'test',
-        });
-      }).toThrow(ValidationError);
-    });
+    // Note: Connection validation is now handled by ConnectionManager constructor
+    // Tests for invalid connection configs should be in ConnectionManager.test.ts
 
     it('should throw ValidationError without exchange', () => {
       expect(() => {
         new Subscriber({
-          connection: { url: 'amqp://localhost' },
+          connection: mockConnectionManager,
           exchange: '',
         });
       }).toThrow(ValidationError);
@@ -83,9 +75,7 @@ describe('Subscriber', () => {
 
     it('should accept custom queue name', () => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
         queueName: 'custom-queue',
       });
@@ -97,9 +87,7 @@ describe('Subscriber', () => {
   describe('on()', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
       });
     });
@@ -149,9 +137,7 @@ describe('Subscriber', () => {
   describe('start()', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
       });
     });
@@ -189,9 +175,7 @@ describe('Subscriber', () => {
 
     it('should use custom prefetch', async () => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         prefetch: 50,
       });
@@ -212,9 +196,7 @@ describe('Subscriber', () => {
 
     it('should use custom queue name if provided', async () => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         queueName: 'my-queue',
       });
@@ -229,9 +211,7 @@ describe('Subscriber', () => {
   describe('stop()', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
       });
     });
@@ -257,9 +237,7 @@ describe('Subscriber', () => {
   describe('pattern matching', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
       });
     });
@@ -451,9 +429,7 @@ describe('Subscriber', () => {
   describe('error handling', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
       });
     });
@@ -491,9 +467,7 @@ describe('Subscriber', () => {
   describe('consumer cancellation', () => {
     beforeEach(() => {
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'test-exchange',
       });
 
@@ -547,9 +521,7 @@ describe('Subscriber', () => {
       let consumeCallback: any;
 
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         slowMessageDetection: {
           slowThresholds: {
@@ -601,9 +573,7 @@ describe('Subscriber', () => {
       let consumeCallback: any;
 
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         slowMessageDetection: {
           slowThresholds: {
@@ -656,9 +626,7 @@ describe('Subscriber', () => {
       let consumeCallback: any;
 
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         slowMessageDetection: {
           slowThresholds: {
@@ -699,9 +667,7 @@ describe('Subscriber', () => {
       let consumeCallback: any;
 
       subscriber = new Subscriber({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         exchange: 'events',
         slowMessageDetection: {
           slowThresholds: {

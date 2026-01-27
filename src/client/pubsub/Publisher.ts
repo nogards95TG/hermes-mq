@@ -16,13 +16,10 @@ import {
  * Publisher configuration
  */
 export interface PublisherConfig {
-  connection: {
-    url: string;
-    reconnect?: boolean;
-    reconnectInterval?: number;
-    maxReconnectAttempts?: number;
-    heartbeat?: number;
-  };
+  /**
+   * Connection manager instance
+   */
+  connection: ConnectionManager;
   exchanges?: Array<{
     name: string;
     type?: 'topic' | 'fanout' | 'direct';
@@ -88,7 +85,10 @@ const DEFAULT_CONFIG = {
  * Required publisher configuration with defaults applied
  */
 type RequiredPublisherConfig = Required<
-  Omit<PublisherConfig, 'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode'>
+  Omit<
+    PublisherConfig,
+    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode' | 'connection'
+  >
 > & {
   exchanges?: PublisherConfig['exchanges'];
   exchange?: string;
@@ -131,18 +131,28 @@ export class Publisher {
   /**
    * Create a new Publisher instance
    *
-   * @param config - Publisher configuration including connection and exchange details
-   * @throws {ValidationError} When connection URL is missing
+   * @param config - Publisher configuration including connection manager and exchange details
+   *
+   * @example
+   * ```typescript
+   * import { ConnectionManager, Publisher } from 'hermes-mq';
+   *
+   * const connection = new ConnectionManager({ url: 'amqp://localhost' });
+   *
+   * const publisher = new Publisher({
+   *   connection,
+   *   exchange: 'events'
+   * });
+   * ```
+   *
+   * @remarks
+   * You can share the same ConnectionManager instance across multiple components
+   * to reuse the same underlying RabbitMQ connection.
    */
   constructor(config: PublisherConfig) {
-    if (!config.connection?.url) {
-      throw new ValidationError('Connection URL is required', {});
-    }
-
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
-      connection: config.connection,
       defaultExchange: config.defaultExchange ?? config.exchange ?? 'amq.topic',
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
@@ -150,14 +160,8 @@ export class Publisher {
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     };
 
-    this.connectionManager = ConnectionManager.getInstance({
-      url: this.config.connection.url,
-      reconnect: this.config.connection.reconnect,
-      reconnectInterval: this.config.connection.reconnectInterval,
-      maxReconnectAttempts: this.config.connection.maxReconnectAttempts,
-      heartbeat: this.config.connection.heartbeat,
-      logger: this.config.logger,
-    });
+    // Use the provided ConnectionManager instance
+    this.connectionManager = config.connection;
 
     // Store default exchange type
     if (this.config.exchange) {

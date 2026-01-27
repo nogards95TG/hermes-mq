@@ -28,21 +28,20 @@ vi.mock('../../src/core', async () => {
 
   return {
     ...actual,
-    ConnectionManager: {
-      getInstance: vi.fn().mockReturnValue({
-        getConnection: vi.fn().mockResolvedValue(mockConnection),
-      }),
-    },
+    ConnectionManager: vi.fn(() => ({
+      getConnection: vi.fn().mockResolvedValue(mockConnection),
+    })),
   };
 });
 
 describe('RpcServer', () => {
   let server: RpcServer;
   let mockConnection: any;
+  let mockConnectionManager: any;
 
   beforeEach(async () => {
-    const manager = (ConnectionManager as any).getInstance();
-    mockConnection = await manager.getConnection();
+    mockConnectionManager = new (ConnectionManager as any)();
+    mockConnection = await mockConnectionManager.getConnection();
   });
 
   afterEach(async () => {
@@ -55,9 +54,7 @@ describe('RpcServer', () => {
   describe('handler registration', () => {
     beforeEach(() => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -112,9 +109,7 @@ describe('RpcServer', () => {
   describe('start()', () => {
     beforeEach(() => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -132,9 +127,7 @@ describe('RpcServer', () => {
 
     it('should use custom prefetch', async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         prefetch: 5,
       });
@@ -156,9 +149,7 @@ describe('RpcServer', () => {
   describe('message handling', () => {
     beforeEach(async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 
@@ -313,9 +304,7 @@ describe('RpcServer', () => {
   describe('stop()', () => {
     beforeEach(async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 
@@ -378,9 +367,7 @@ describe('RpcServer', () => {
   describe('configuration', () => {
     it('should have prefetch of 10 by default', async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 
@@ -392,9 +379,7 @@ describe('RpcServer', () => {
 
     it('should allow custom prefetch value', async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         prefetch: 20,
       });
@@ -409,9 +394,7 @@ describe('RpcServer', () => {
   describe('consumer cancellation', () => {
     beforeEach(() => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -454,9 +437,7 @@ describe('RpcServer', () => {
     it('should trigger warn callback for slow messages', async () => {
       const onSlowMessage = vi.fn();
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         slowMessageDetection: {
           slowThresholds: {
@@ -505,9 +486,7 @@ describe('RpcServer', () => {
     it('should trigger error callback for very slow messages', async () => {
       const onSlowMessage = vi.fn();
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         slowMessageDetection: {
           slowThresholds: {
@@ -557,9 +536,7 @@ describe('RpcServer', () => {
     it('should not trigger callback for fast messages', async () => {
       const onSlowMessage = vi.fn();
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         slowMessageDetection: {
           slowThresholds: {
@@ -596,9 +573,7 @@ describe('RpcServer', () => {
 
     it('should work without slow message detection config', async () => {
       server = new RpcServer({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 

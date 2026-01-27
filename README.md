@@ -67,9 +67,12 @@ pnpm add hermes-mq
 
 ```typescript
 import { RpcServer } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   prefetch: 15, // defaults to 10 (RabbitMQ best practice)
 });
@@ -91,9 +94,12 @@ await server.start();
 
 ```typescript
 import { RpcClient } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const client = new RpcClient({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   timeout: 5000,
 });
@@ -109,9 +115,12 @@ console.log(user);
 
 ```typescript
 import { Publisher } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const publisher = new Publisher({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
 });
 
@@ -125,9 +134,12 @@ await publisher.publish('user.created', {
 
 ```typescript
 import { Subscriber } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const subscriber = new Subscriber({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   queueName: 'email_service',
 });
@@ -143,6 +155,47 @@ subscriber
 await subscriber.start();
 ```
 
+### Connection Sharing (Best Practice)
+
+For optimal resource usage, share a single `ConnectionManager` instance across multiple clients and servers:
+
+```typescript
+import { ConnectionManager, RpcServer, RpcClient, Publisher, Subscriber } from 'hermes-mq';
+
+// Create one connection manager
+const connection = new ConnectionManager({
+  url: 'amqp://localhost',
+  reconnect: true,
+  heartbeat: 60,
+});
+
+// Share it across all components
+const server = new RpcServer({ connection, queueName: 'api' });
+const client = new RpcClient({ connection, queueName: 'api' });
+const publisher = new Publisher({ connection, exchange: 'events' });
+const subscriber = new Subscriber({ connection, exchange: 'events' });
+
+// Start all components
+await Promise.all([server.start(), subscriber.start()]);
+
+// All components share the same underlying RabbitMQ connection
+// This reduces resource usage and improves performance
+
+// Cleanup: close components first, then connection
+await client.close();
+await server.stop();
+await publisher.close();
+await subscriber.stop();
+await connection.close(); // Close shared connection last
+```
+
+**Benefits:**
+
+- Reduced TCP connections to RabbitMQ (one instead of many)
+- Lower memory footprint
+- Easier connection management and monitoring
+- Consistent reconnection behavior across all components
+
 ## 🛡️ Production Reliability Features
 
 Hermes MQ includes comprehensive reliability features designed for production environments:
@@ -153,7 +206,7 @@ Configure automatic message retry behavior with exponential backoff:
 
 ```typescript
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'critical-service',
   ackStrategy: {
     mode: 'auto', // 'auto' | 'manual'
@@ -192,7 +245,7 @@ Automatically handle malformed messages without crashing:
 
 ```typescript
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   messageValidation: {
     maxSize: 1048576, // 1MB
@@ -211,7 +264,7 @@ Prevent reprocessing of duplicate messages using LRU cache.
 
 ```typescript
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'payments',
   deduplication: {
     enabled: true, // Enable for non-idempotent operations
@@ -235,7 +288,7 @@ Prevent single failed handler from affecting other handlers:
 
 ```typescript
 const subscriber = new Subscriber({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   handlerTimeout: 30000, // 30 seconds
   errorHandling: {
@@ -254,7 +307,7 @@ Properly clean up resources and wait for in-flight messages:
 
 ```typescript
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'myqueue',
 });
 
@@ -309,7 +362,7 @@ Ensure messages are safely persisted before considering them sent:
 
 ```typescript
 const publisher = new Publisher({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   publisherConfirms: true, // default: true
   confirmMode: 'sync', // 'sync' | 'async'
@@ -340,7 +393,7 @@ RPC clients automatically cleanup expired callbacks:
 
 ```typescript
 const client = new RpcClient({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'service',
   timeout: 30000, // Callbacks > 2x timeout are auto-cleaned every 30s
 });
@@ -358,7 +411,7 @@ Automatic re-registration when RabbitMQ cancels consumers (during maintenance, q
 // - Log all reconnection attempts
 
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'service',
   // No configuration needed - recovery is automatic
 });
@@ -372,7 +425,7 @@ Handle unroutable messages gracefully:
 
 ```typescript
 const publisher = new Publisher({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   mandatory: true,
   onReturn: (msg) => {
@@ -431,13 +484,16 @@ Monitor and detect slow message processing with multi-level thresholds:
 
 ```typescript
 import { RpcServer } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   slowMessageDetection: {
     slowThresholds: {
-      warn: 1000,  // Log warning if handler takes > 1 second
+      warn: 1000, // Log warning if handler takes > 1 second
       error: 5000, // Log error if handler takes > 5 seconds
     },
     onSlowMessage: (context) => {
@@ -463,9 +519,12 @@ const server = new RpcServer({
 
 ```typescript
 import { Subscriber } from 'hermes-mq';
+import { ConnectionManager } from 'hermes-mq';
+
+const connection = new ConnectionManager({ url: 'amqp://localhost' });
 
 const subscriber = new Subscriber({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   slowMessageDetection: {
     slowThresholds: {
@@ -480,6 +539,7 @@ const subscriber = new Subscriber({
 ```
 
 **Use Cases:**
+
 - Performance monitoring and bottleneck detection
 - SLA enforcement and alerting
 - Identifying problematic handlers that need optimization
@@ -495,7 +555,7 @@ Built-in health check API for Kubernetes liveness/readiness probes and monitorin
 import { HealthChecker } from 'hermes-mq';
 
 const health = new HealthChecker({
-  connection: { url: 'amqp://localhost' },
+  connection,
 });
 
 // Optionally register servers/subscribers for consumer tracking
@@ -570,6 +630,7 @@ readinessProbe:
 ```
 
 **Health Status:**
+
 - `healthy`: Connection UP + at least 1 channel open
 - `degraded`: Connection UP but no channels (warning state)
 - `unhealthy`: Connection DOWN
@@ -586,25 +647,25 @@ const metrics = MetricsCollector.global();
 
 // Simply enable metrics on your components
 const server = new RpcServer({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   enableMetrics: true, // Metrics automatically collected globally
 });
 
 const client = new RpcClient({
-  connection: { url: 'amqp://localhost' },
+  connection,
   queueName: 'users',
   enableMetrics: true, // Metrics automatically collected globally
 });
 
 const publisher = new Publisher({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   enableMetrics: true, // Metrics automatically collected globally
 });
 
 const subscriber = new Subscriber({
-  connection: { url: 'amqp://localhost' },
+  connection,
   exchange: 'events',
   enableMetrics: true, // Metrics automatically collected globally
 });
@@ -617,6 +678,7 @@ app.get('/metrics', (req, res) => {
 ```
 
 **How it works:**
+
 - Set `enableMetrics: true` on any component to enable automatic metrics collection
 - All metrics are automatically collected in a global singleton `MetricsCollector` instance
 - Metrics from all components (RpcClient, RpcServer, Publisher, Subscriber) are aggregated together
@@ -646,10 +708,14 @@ hermes_message_processing_duration_seconds{exchange="events",eventName="user.cre
 
 ```typescript
 // Counter
-metrics.incrementCounter('messages_published_total', {
-  queue: 'users',
-  status: 'success'
-}, 1);
+metrics.incrementCounter(
+  'messages_published_total',
+  {
+    queue: 'users',
+    status: 'success',
+  },
+  1
+);
 
 // Gauge
 metrics.setGauge('connection_state', { state: 'connected' }, 1);
@@ -657,9 +723,13 @@ metrics.incrementGauge('channel_count', {}, 1);
 metrics.decrementGauge('channel_count', {}, 1);
 
 // Histogram (for latencies, durations, etc.)
-metrics.observeHistogram('message_duration_seconds', {
-  queue: 'users'
-}, 0.125);
+metrics.observeHistogram(
+  'message_duration_seconds',
+  {
+    queue: 'users',
+  },
+  0.125
+);
 
 // Custom help text
 metrics.setHelp('messages_published_total', 'Total number of published messages');
@@ -697,6 +767,7 @@ hermes_rpc_request_duration_seconds_count{queue="users",status="success"} 1523
 ```
 
 **Features:**
+
 - ✅ Zero external dependencies
 - ✅ Prometheus text format compatible
 - ✅ Automatic metrics for RPC Client/Server and Publisher/Subscriber

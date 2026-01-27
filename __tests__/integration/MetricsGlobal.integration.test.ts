@@ -6,6 +6,7 @@ import {
   Publisher,
   Subscriber,
   MetricsCollector,
+  ConnectionManager,
 } from '../../src';
 
 describe('Global Metrics Integration Tests', () => {
@@ -36,13 +37,18 @@ describe('Global Metrics Integration Tests', () => {
   });
 
   describe('Global metrics collection', () => {
+    let connection: ConnectionManager;
+    let connection2: ConnectionManager;
+
     it('should automatically collect metrics from all components when enabled', async () => {
       // Get global metrics instance
       const metrics = MetricsCollector.global();
 
       // Create components with metrics enabled
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-global-metrics',
         enableMetrics: true,
       });
@@ -51,16 +57,18 @@ describe('Global Metrics Integration Tests', () => {
       await server.start();
 
       // Give server time to initialize
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-global-metrics',
         enableMetrics: true,
       });
 
+      connection2 = new ConnectionManager({ url: rabbitUrl });
+
       const publisher = new Publisher({
-        connection: { url: rabbitUrl },
+        connection: connection2,
         exchange: 'test-global-exchange',
         enableMetrics: true,
       });
@@ -70,7 +78,7 @@ describe('Global Metrics Integration Tests', () => {
       await publisher.publish('test.event', { data: 'test' });
 
       // Wait a bit for metrics to be updated
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const output = metrics.toPrometheus();
 
@@ -82,11 +90,15 @@ describe('Global Metrics Integration Tests', () => {
       await client.close();
       await server.stop();
       await publisher.close();
+      await connection.close();
+      await connection2.close();
     });
 
     it('should not collect metrics when disabled', async () => {
+      connection = new ConnectionManager({ url: rabbitUrl });
+
       const server = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-no-metrics',
         enableMetrics: false, // explicitly disabled
       });
@@ -94,10 +106,10 @@ describe('Global Metrics Integration Tests', () => {
       server.registerHandler('TEST', async () => ({ result: 'ok' }));
       await server.start();
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const client = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection,
         queueName: 'test-no-metrics',
         // enableMetrics defaults to false
       });
@@ -113,6 +125,7 @@ describe('Global Metrics Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should aggregate metrics from multiple components into single global instance', async () => {
@@ -120,13 +133,13 @@ describe('Global Metrics Integration Tests', () => {
 
       // Create multiple clients and servers
       const server1 = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'queue-1',
         enableMetrics: true,
       });
 
       const server2 = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'queue-2',
         enableMetrics: true,
       });
@@ -137,16 +150,16 @@ describe('Global Metrics Integration Tests', () => {
       await server1.start();
       await server2.start();
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const client1 = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'queue-1',
         enableMetrics: true,
       });
 
       const client2 = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'queue-2',
         enableMetrics: true,
       });
@@ -155,15 +168,19 @@ describe('Global Metrics Integration Tests', () => {
       await client1.send('ADD', { a: 2, b: 3 });
       await client2.send('MULTIPLY', { a: 4, b: 5 });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const output = metrics.toPrometheus();
 
       // Verify metrics from both queues
       expect(output).toMatch(/hermes_rpc_requests_total\{queue="queue-1",status="success"\} 1/);
       expect(output).toMatch(/hermes_rpc_requests_total\{queue="queue-2",status="success"\} 1/);
-      expect(output).toMatch(/hermes_messages_consumed_total\{command="ADD",queue="queue-1",status="ack"\} 1/);
-      expect(output).toMatch(/hermes_messages_consumed_total\{command="MULTIPLY",queue="queue-2",status="ack"\} 1/);
+      expect(output).toMatch(
+        /hermes_messages_consumed_total\{command="ADD",queue="queue-1",status="ack"\} 1/
+      );
+      expect(output).toMatch(
+        /hermes_messages_consumed_total\{command="MULTIPLY",queue="queue-2",status="ack"\} 1/
+      );
 
       await client1.close();
       await client2.close();
@@ -175,13 +192,13 @@ describe('Global Metrics Integration Tests', () => {
       const metrics = MetricsCollector.global();
 
       const serverWithMetrics = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'with-metrics',
         enableMetrics: true,
       });
 
       const serverWithoutMetrics = new RpcServer({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'without-metrics',
         enableMetrics: false,
       });
@@ -192,16 +209,16 @@ describe('Global Metrics Integration Tests', () => {
       await serverWithMetrics.start();
       await serverWithoutMetrics.start();
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const client1 = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'with-metrics',
         enableMetrics: true,
       });
 
       const client2 = new RpcClient({
-        connection: { url: rabbitUrl },
+        connection: new ConnectionManager({ url: rabbitUrl }),
         queueName: 'without-metrics',
         // No metrics
       });
@@ -209,7 +226,7 @@ describe('Global Metrics Integration Tests', () => {
       await client1.send('TEST', {});
       await client2.send('TEST', {});
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const output = metrics.toPrometheus();
 

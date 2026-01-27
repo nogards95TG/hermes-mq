@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RpcClient } from '../../src/client';
 import { RpcServer } from '../../src/server';
-import { TimeoutError, ValidationError, SilentLogger } from '../../src/core';
+import { TimeoutError, ValidationError, SilentLogger, ConnectionManager } from '../../src/core';
 import { setupRabbitMQSuite, withRabbitMQ } from './testContainer';
 
 /**
@@ -19,10 +19,11 @@ describe('RpcClient Integration Tests', () => {
       const logger = new SilentLogger();
 
       // Start server
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-e2e',
-        logger,
       });
 
       server.registerHandler('ADD', (data: { a: number; b: number }) => {
@@ -33,9 +34,8 @@ describe('RpcClient Integration Tests', () => {
 
       // Create client
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-e2e',
-        logger,
       });
 
       // Send request
@@ -50,15 +50,17 @@ describe('RpcClient Integration Tests', () => {
       // Cleanup
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it.skip('should handle multiple concurrent requests with correct correlation', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-concurrent',
-        logger,
       });
 
       server.registerHandler('ECHO', (data: { id: number }) => data);
@@ -66,9 +68,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-concurrent',
-        logger,
       });
 
       // Send 10 concurrent requests
@@ -83,15 +84,17 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should handle requests with metadata', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-metadata',
-        logger,
       });
 
       let receivedMetadata: Record<string, any> | undefined;
@@ -104,9 +107,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-metadata',
-        logger,
       });
 
       await client.send(
@@ -122,6 +124,7 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -129,10 +132,11 @@ describe('RpcClient Integration Tests', () => {
     it('should propagate validation errors from server to client', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-validation',
-        logger,
       });
 
       server.registerHandler('DIVIDE', (data: { a: number; b: number }) => {
@@ -145,24 +149,25 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-validation',
-        logger,
       });
 
       await expect(client.send('DIVIDE', { a: 10, b: 0 })).rejects.toThrow('Cannot divide by zero');
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should propagate custom errors with details', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-custom-error',
-        logger,
       });
 
       class CustomError extends Error {
@@ -182,9 +187,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-custom-error',
-        logger,
       });
 
       try {
@@ -198,29 +202,31 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should handle unknown command error', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-unknown',
-        logger,
       });
 
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-unknown',
-        logger,
       });
 
       await expect(client.send('UNKNOWN_COMMAND', {})).rejects.toThrow('No handler registered');
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -228,10 +234,11 @@ describe('RpcClient Integration Tests', () => {
     it('should timeout when server response is too slow', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-timeout',
-        logger,
       });
 
       server.registerHandler('SLOW', async () => {
@@ -242,25 +249,26 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-timeout',
-        timeout: 1000, // 1 second timeout
-        logger,
+        timeout: 1000,
       });
 
       await expect(client.send('SLOW', {})).rejects.toThrow(TimeoutError);
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should complete when operation is within timeout', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-fast',
-        logger,
       });
 
       server.registerHandler('FAST', async () => {
@@ -271,10 +279,9 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-fast',
         timeout: 2000,
-        logger,
       });
 
       const result = await client.send('FAST', {});
@@ -282,15 +289,17 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should support per-request timeout override', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-override',
-        logger,
       });
 
       server.registerHandler('MEDIUM', async () => {
@@ -301,10 +310,9 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-override',
-        timeout: 500, // Default 500ms
-        logger,
+        timeout: 500,
       });
 
       // This should timeout with default
@@ -316,6 +324,7 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -323,10 +332,11 @@ describe('RpcClient Integration Tests', () => {
     it('should cancel request with AbortSignal', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-abort',
-        logger,
       });
 
       server.registerHandler('LONG_TASK', async () => {
@@ -337,10 +347,9 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-abort',
         timeout: 10000,
-        logger,
       });
 
       const controller = new AbortController();
@@ -354,6 +363,7 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -362,11 +372,12 @@ describe('RpcClient Integration Tests', () => {
       const logger = new SilentLogger();
       const processOrder: number[] = [];
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-prefetch',
-        prefetch: 3, // Process max 3 at a time
-        logger,
+        prefetch: 3,
       });
 
       server.registerHandler('WORK', async (data: { id: number }) => {
@@ -378,9 +389,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-prefetch',
-        logger,
       });
 
       // Send 10 requests
@@ -393,16 +403,18 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
 
     it('should handle graceful shutdown with in-flight messages', async () => {
       const logger = new SilentLogger();
       let handlerCompleted = false;
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-graceful',
-        logger,
       });
 
       server.registerHandler('SLOW_WORK', async () => {
@@ -414,9 +426,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-graceful',
-        logger,
       });
 
       // Start request
@@ -439,10 +450,11 @@ describe('RpcClient Integration Tests', () => {
     it('should normalize commands to uppercase', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-normalize',
-        logger,
       });
 
       server.registerHandler('TEST_COMMAND', () => ({ success: true }));
@@ -450,9 +462,8 @@ describe('RpcClient Integration Tests', () => {
       await server.start();
 
       const client = new RpcClient({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-normalize',
-        logger,
       });
 
       // Send with lowercase
@@ -465,6 +476,7 @@ describe('RpcClient Integration Tests', () => {
 
       await client.close();
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -472,10 +484,11 @@ describe('RpcClient Integration Tests', () => {
     it('should handle multiple clients connecting to same queue', async () => {
       const logger = new SilentLogger();
 
+      const connection = new ConnectionManager({ url: getUrl(), logger });
+
       const server = new RpcServer({
-        connection: { url: getUrl() },
+        connection,
         queueName: 'test-multi-client',
-        logger,
       });
 
       server.registerHandler('INCREMENT', (data: { value: number }) => ({
@@ -484,14 +497,13 @@ describe('RpcClient Integration Tests', () => {
 
       await server.start();
 
-      // Create 5 clients
+      // Create 5 clients sharing the same connection
       const clients = await Promise.all(
         Array.from({ length: 5 }, () =>
           Promise.resolve(
             new RpcClient({
-              connection: { url: getUrl() },
+              connection,
               queueName: 'test-multi-client',
-              logger,
             })
           )
         )
@@ -510,6 +522,7 @@ describe('RpcClient Integration Tests', () => {
       // Cleanup
       await Promise.all(clients.map((c: RpcClient) => c.close()));
       await server.stop();
+      await connection.close();
     });
   });
 
@@ -519,10 +532,11 @@ describe('RpcClient Integration Tests', () => {
         const logger = new SilentLogger();
 
         // Start server
+        const connection = new ConnectionManager({ url, logger });
+
         const server = new RpcServer({
-          connection: { url },
+          connection,
           queueName: 'isolated-test',
-          logger,
         });
 
         server.registerHandler('ISOLATED_CMD', (data: { message: string }) => ({
@@ -534,9 +548,8 @@ describe('RpcClient Integration Tests', () => {
 
         // Create client
         const client = new RpcClient({
-          connection: { url },
+          connection,
           queueName: 'isolated-test',
-          logger,
         });
 
         // Send request
@@ -550,54 +563,57 @@ describe('RpcClient Integration Tests', () => {
 
         // Cleanup
         await client.close();
-        await server.stop();
+      await server.stop();
+      await connection.close();
       });
     });
 
     it('should handle multiple isolated containers in parallel tests', async () => {
       // This demonstrates that each withRabbitMQ call gets its own container
       const test1 = withRabbitMQ(async (url) => {
+        const connection = new ConnectionManager({ url, logger: new SilentLogger() });
+
         const server = new RpcServer({
-          connection: { url },
+          connection,
           queueName: 'parallel-1',
-          logger: new SilentLogger(),
         });
 
         server.registerHandler('TEST', () => ({ testId: 1 }));
         await server.start();
 
         const client = new RpcClient({
-          connection: { url },
+          connection,
           queueName: 'parallel-1',
-          logger: new SilentLogger(),
         });
 
         const result = await client.send('TEST', {});
         await client.close();
-        await server.stop();
+      await server.stop();
+      await connection.close();
 
         return result;
       });
 
       const test2 = withRabbitMQ(async (url) => {
+        const connection = new ConnectionManager({ url, logger: new SilentLogger() });
+
         const server = new RpcServer({
-          connection: { url },
+          connection,
           queueName: 'parallel-2',
-          logger: new SilentLogger(),
         });
 
         server.registerHandler('TEST', () => ({ testId: 2 }));
         await server.start();
 
         const client = new RpcClient({
-          connection: { url },
+          connection,
           queueName: 'parallel-2',
-          logger: new SilentLogger(),
         });
 
         const result = await client.send('TEST', {});
         await client.close();
-        await server.stop();
+      await server.stop();
+      await connection.close();
 
         return result;
       });

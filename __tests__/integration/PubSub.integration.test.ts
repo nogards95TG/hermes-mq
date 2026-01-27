@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Publisher } from '../../src/client';
 import { Subscriber } from '../../src/server';
+import { ConnectionManager } from '../../src/core';
 import { setupRabbitMQSuite } from './testContainer';
 
 describe('PubSub Integration Tests', () => {
@@ -9,8 +10,12 @@ describe('PubSub Integration Tests', () => {
   describe('Publisher → Subscriber flow', () => {
     let publisher: Publisher;
     let subscriber: Subscriber;
+    let connection: ConnectionManager;
 
     afterEach(async () => {
+      if (connection) {
+        await connection.close();
+      }
       if (subscriber?.isRunning()) {
         await subscriber.stop();
       }
@@ -24,15 +29,17 @@ describe('PubSub Integration Tests', () => {
       const eventName = 'user.created';
       const eventData = { id: 1, name: 'John Doe' };
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       const receivedEvents: any[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -54,15 +61,17 @@ describe('PubSub Integration Tests', () => {
     it('should match wildcard * pattern (one word)', async () => {
       const exchange = 'wildcard-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       const receivedEvents: string[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -88,15 +97,17 @@ describe('PubSub Integration Tests', () => {
     it('should match wildcard # pattern (zero or more words)', async () => {
       const exchange = 'hash-wildcard-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       const receivedEvents: string[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -124,15 +135,17 @@ describe('PubSub Integration Tests', () => {
     it('should NOT receive events that do not match pattern', async () => {
       const exchange = 'pattern-mismatch-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       const receivedEvents: string[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -156,8 +169,10 @@ describe('PubSub Integration Tests', () => {
     it('should call multiple handlers for matching patterns', async () => {
       const exchange = 'multi-handler-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -165,7 +180,7 @@ describe('PubSub Integration Tests', () => {
       const handler2Events: string[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -194,15 +209,17 @@ describe('PubSub Integration Tests', () => {
     it('should preserve metadata in context', async () => {
       const exchange = 'metadata-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       let receivedMetadata: any = null;
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
@@ -230,20 +247,22 @@ describe('PubSub Integration Tests', () => {
       const exchange1 = 'multi-exchange-1';
       const exchange2 = 'multi-exchange-2';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
       });
 
       const events1: any[] = [];
       const events2: any[] = [];
 
       const subscriber1 = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange: exchange1,
       });
 
       const subscriber2 = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange: exchange2,
       });
 
@@ -277,15 +296,17 @@ describe('PubSub Integration Tests', () => {
       const exchange = 'throughput-test';
       const messageCount = 100;
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
       });
 
       const receivedCount: number[] = [];
 
       subscriber = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
         prefetch: 50,
       });
@@ -314,18 +335,22 @@ describe('PubSub Integration Tests', () => {
     let publisher: Publisher;
     let subscriber1: Subscriber;
     let subscriber2: Subscriber;
+    let connection: ConnectionManager;
 
     afterEach(async () => {
       if (subscriber1?.isRunning()) await subscriber1.stop();
       if (subscriber2?.isRunning()) await subscriber2.stop();
       if (publisher) await publisher.close();
+      if (connection) await connection.close();
     });
 
     it('should broadcast to multiple subscribers (fanout)', async () => {
       const exchange = 'fanout-test';
 
+      connection = new ConnectionManager({ url: getUrl() });
+
       publisher = new Publisher({
-        connection: { url: getUrl() },
+        connection,
         exchange,
         exchangeType: 'fanout',
       });
@@ -334,13 +359,13 @@ describe('PubSub Integration Tests', () => {
       const events2: any[] = [];
 
       subscriber1 = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
         exchangeType: 'fanout',
       });
 
       subscriber2 = new Subscriber({
-        connection: { url: getUrl() },
+        connection,
         exchange,
         exchangeType: 'fanout',
       });

@@ -8,12 +8,10 @@ vi.mock('../../src/core/connection/ConnectionManager', () => {
   const mockGetChannelCount = vi.fn();
 
   return {
-    ConnectionManager: {
-      getInstance: vi.fn(() => ({
-        getConnectionStatus: mockGetConnectionStatus,
-        getChannelCount: mockGetChannelCount,
-      })),
-    },
+    ConnectionManager: vi.fn(() => ({
+      getConnectionStatus: mockGetConnectionStatus,
+      getChannelCount: mockGetChannelCount,
+    })),
   };
 });
 
@@ -24,10 +22,10 @@ describe('HealthChecker', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockConnectionManager = ConnectionManager.getInstance({ url: 'amqp://localhost' });
+    mockConnectionManager = new ConnectionManager({ url: 'amqp://localhost' });
 
     healthChecker = new HealthChecker({
-      connection: { url: 'amqp://localhost' },
+      connection: mockConnectionManager,
     });
   });
 
@@ -304,8 +302,10 @@ describe('HealthChecker', () => {
         getConsumerCount: vi.fn().mockReturnValue(1),
       } as any;
 
+      const connection = new ConnectionManager({ url: 'amqp://localhost' });
+
       const checker = new HealthChecker({
-        connection: { url: 'amqp://localhost' },
+        connection,
         servers: [mockServer],
       });
 

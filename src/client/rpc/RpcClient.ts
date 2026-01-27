@@ -2,7 +2,6 @@ import * as amqp from 'amqplib';
 import { randomUUID } from 'crypto';
 import {
   ConnectionManager,
-  ConnectionConfig,
   TimeoutError,
   ValidationError,
   Logger,
@@ -18,7 +17,10 @@ import {
  * RPC Client configuration
  */
 export interface RpcClientConfig {
-  connection: ConnectionConfig;
+  /**
+   * Connection manager instance
+   */
+  connection: ConnectionManager;
   queueName: string;
   timeout?: number;
   publisherConfirms?: boolean;
@@ -77,10 +79,12 @@ type RequiredRpcClientConfig = Required<
  *
  * @example
  * ```typescript
- * import { RpcClient } from 'hermes-mq';
+ * import { RpcClient, ConnectionManager } from 'hermes-mq';
+ *
+ * const connection = new ConnectionManager({ url: 'amqp://localhost' });
  *
  * const client = new RpcClient({
- *   connection: { url: 'amqp://localhost' },
+ *   connection,
  *   queueName: 'my-service'
  * });
  *
@@ -106,7 +110,10 @@ export class RpcClient {
   /**
    * Create a new RPC client instance
    *
-   * @param config - Client configuration including connection details and queue name
+   * @param config - Client configuration including connection manager and queue name
+   * @remarks
+   * You can share the same ConnectionManager instance across multiple components
+   * to reuse the same underlying RabbitMQ connection.
    */
   constructor(config: RpcClientConfig) {
     this.config = {
@@ -115,7 +122,10 @@ export class RpcClient {
       // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     };
-    this.connectionManager = ConnectionManager.getInstance(config.connection);
+
+    // Use the provided ConnectionManager instance
+    this.connectionManager = config.connection;
+
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
 

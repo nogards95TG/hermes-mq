@@ -45,20 +45,20 @@ vi.mock('../../src/core', async () => {
 
   return {
     ...actual,
-    ConnectionManager: {
-      getInstance: vi.fn().mockReturnValue({
-        getConnection: vi.fn().mockResolvedValue(mockConnection),
-      }),
-    },
+    ConnectionManager: vi.fn(() => ({
+      getConnection: vi.fn().mockResolvedValue(mockConnection),
+    })),
   };
 });
 
 describe('RpcClient', () => {
   let client: RpcClient;
   let mockConnection: any;
+  let mockConnectionManager: any;
 
   beforeEach(async () => {
-    const manager = (ConnectionManager as any).getInstance();
+    const manager = new (ConnectionManager as any)();
+    mockConnectionManager = manager;
     mockConnection = await manager.getConnection();
   });
 
@@ -72,9 +72,7 @@ describe('RpcClient', () => {
   describe('initialization', () => {
     it('should initialize with valid config', async () => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 
@@ -84,9 +82,7 @@ describe('RpcClient', () => {
 
     it('should use custom timeout', async () => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         timeout: 5000,
       });
@@ -98,9 +94,7 @@ describe('RpcClient', () => {
   describe('send()', () => {
     beforeEach(() => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -240,9 +234,7 @@ describe('RpcClient', () => {
   describe('close()', () => {
     beforeEach(() => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -309,9 +301,7 @@ describe('RpcClient', () => {
       });
 
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -348,9 +338,7 @@ describe('RpcClient', () => {
         .mockRejectedValueOnce(new Error('Init failed'));
 
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 
@@ -361,9 +349,7 @@ describe('RpcClient', () => {
   describe('reply handling edge cases', () => {
     beforeEach(() => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
     });
@@ -406,9 +392,7 @@ describe('RpcClient', () => {
 
     it('should cleanup expired pending requests', async () => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
         timeout: 1000,
       });
@@ -430,9 +414,7 @@ describe('RpcClient', () => {
 
     it('should run cleanup interval every 30 seconds', async () => {
       client = new RpcClient({
-        connection: {
-          url: 'amqp://localhost',
-        },
+        connection: mockConnectionManager,
         queueName: 'test-queue',
       });
 

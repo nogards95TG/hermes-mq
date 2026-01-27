@@ -37,13 +37,10 @@ export interface ErrorContext {
  * Subscriber configuration
  */
 export interface SubscriberConfig {
-  connection: {
-    url: string;
-    reconnect?: boolean;
-    reconnectInterval?: number;
-    maxReconnectAttempts?: number;
-    heartbeat?: number;
-  };
+  /**
+   * Connection manager instance
+   */
+  connection: ConnectionManager;
   exchange: string;
   exchangeType?: 'topic' | 'fanout' | 'direct';
   exchangeOptions?: {
@@ -102,12 +99,11 @@ interface HandlerRegistration<T = any> {
  * Required subscriber configuration with defaults applied
  */
 type RequiredSubscriberConfig = Required<
-  Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions'>
+  Omit<SubscriberConfig, 'queueName' | 'queueOptions' | 'exchangeOptions' | 'connection'>
 > & {
   queueName?: string;
   queueOptions?: SubscriberConfig['queueOptions'];
   exchangeOptions?: SubscriberConfig['exchangeOptions'];
-  connection: SubscriberConfig['connection'];
   logger: Logger;
   serializer: Serializer;
   metrics?: MetricsCollector;
@@ -144,10 +140,12 @@ const DEFAULT_CONFIG = {
  *
  * @example
  * ```typescript
- * import { Subscriber } from 'hermes-mq';
+ * import { ConnectionManager, Subscriber } from 'hermes-mq';
+ *
+ * const connection = new ConnectionManager({ url: 'amqp://localhost' });
  *
  * const subscriber = new Subscriber({
- *   connection: { url: 'amqp://localhost' },
+ *   connection,
  *   exchange: 'events'
  * });
  *
@@ -184,14 +182,13 @@ export class Subscriber {
   /**
    * Create a new Subscriber instance
    *
-   * @param config - Subscriber configuration including connection and exchange details
-   * @throws {ValidationError} When connection URL or exchange is missing
+   * @param config - Subscriber configuration including connection manager and exchange details
+   * @throws {ValidationError} When exchange is missing
+   * @remarks
+   * You can share the same ConnectionManager instance across multiple components
+   * to reuse the same underlying RabbitMQ connection.
    */
   constructor(config: SubscriberConfig) {
-    if (!config.connection?.url) {
-      throw new ValidationError('Connection URL is required', {});
-    }
-
     if (!config.exchange) {
       throw new ValidationError('Exchange is required', {});
     }
@@ -199,7 +196,6 @@ export class Subscriber {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
-      connection: config.connection,
       exchange: config.exchange,
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
@@ -209,14 +205,8 @@ export class Subscriber {
 
     this.messageParser = new MessageParser(this.config.messageValidation);
 
-    this.connectionManager = ConnectionManager.getInstance({
-      url: this.config.connection.url,
-      reconnect: this.config.connection.reconnect,
-      reconnectInterval: this.config.connection.reconnectInterval,
-      maxReconnectAttempts: this.config.connection.maxReconnectAttempts,
-      heartbeat: this.config.connection.heartbeat,
-      logger: this.config.logger,
-    });
+    // Use the provided ConnectionManager instance
+    this.connectionManager = config.connection;
   }
 
   /**

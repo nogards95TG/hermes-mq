@@ -41,16 +41,16 @@ const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
 };
 
 /**
- * ConnectionManager implements singleton pattern for RabbitMQ connections
+ * ConnectionManager manages RabbitMQ connections
  *
  * Manages RabbitMQ connections with automatic reconnection, connection pooling,
- * and graceful error handling. Each unique URL gets its own ConnectionManager instance.
+ * and graceful error handling.
  *
  * @example
  * ```typescript
  * import { ConnectionManager } from 'hermes-mq/core';
  *
- * const manager = ConnectionManager.getInstance({
+ * const manager = new ConnectionManager({
  *   url: 'amqp://localhost',
  *   reconnect: true,
  *   heartbeat: 60
@@ -63,7 +63,6 @@ const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
  * ```
  */
 export class ConnectionManager extends EventEmitter {
-  private static instances = new Map<string, ConnectionManager>();
   private connection: amqp.Connection | null = null;
   private isConnecting = false;
   private reconnectAttempts = 0;
@@ -75,29 +74,10 @@ export class ConnectionManager extends EventEmitter {
   private connectedAt: Date | null = null;
   private channelCount = 0;
 
-  private constructor(config: ConnectionConfig) {
+  constructor(config: ConnectionConfig) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = config.logger || new SilentLogger();
-  }
-
-  /**
-   * Get or create ConnectionManager instance for given configuration
-   *
-   * Returns a singleton instance for each unique URL. Multiple calls with the same
-   * URL will return the same instance.
-   *
-   * @param config - Connection configuration
-   * @returns ConnectionManager instance
-   */
-  static getInstance(config: ConnectionConfig): ConnectionManager {
-    const key = config.url;
-
-    if (!ConnectionManager.instances.has(key)) {
-      ConnectionManager.instances.set(key, new ConnectionManager(config));
-    }
-
-    return ConnectionManager.instances.get(key)!;
   }
 
   /**
@@ -336,8 +316,6 @@ export class ConnectionManager extends EventEmitter {
       this.connection = null;
     }
 
-    // Remove from instances map
-    ConnectionManager.instances.delete(this.config.url);
     this.removeAllListeners();
   }
 

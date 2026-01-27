@@ -1,7 +1,6 @@
 import * as amqp from 'amqplib';
 import {
   ConnectionManager,
-  ConnectionConfig,
   ValidationError,
   Logger,
   SilentLogger,
@@ -22,7 +21,10 @@ import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
  * RPC Server configuration
  */
 export interface RpcServerConfig {
-  connection: ConnectionConfig;
+  /**
+   * Connection manager instance
+   */
+  connection: ConnectionManager;
   queueName: string;
   prefetch?: number;
   serializer?: Serializer;
@@ -94,10 +96,12 @@ const DEFAULT_CONFIG = {
  *
  * @example
  * ```typescript
- * import { RpcServer } from 'hermes-mq';
+ * import { RpcServer, ConnectionManager } from 'hermes-mq';
+ *
+ * const connection = new ConnectionManager({ url: 'amqp://localhost' });
  *
  * const server = new RpcServer({
- *   connection: { url: 'amqp://localhost' },
+ *   connection,
  *   queueName: 'calculator'
  * });
  *
@@ -131,7 +135,10 @@ export class RpcServer {
   /**
    * Create a new RPC server instance
    *
-   * @param config - Server configuration including connection and queue details
+   * @param config - Server configuration including connection manager and queue details
+   * @remarks
+   * You can share the same ConnectionManager instance across multiple components
+   * to reuse the same underlying RabbitMQ connection.
    */
   constructor(config: RpcServerConfig) {
     this.config = {
@@ -140,7 +147,10 @@ export class RpcServer {
       // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     } as any;
-    this.connectionManager = ConnectionManager.getInstance(config.connection);
+
+    // Use the provided ConnectionManager instance
+    this.connectionManager = config.connection;
+
     this.logger = config.logger || new SilentLogger();
     this.serializer = config.serializer || new JsonSerializer();
     this.messageParser = new MessageParser(this.config.messageValidation);
@@ -378,9 +388,7 @@ export class RpcServer {
    * Parse and validate incoming message
    * Returns null if message was handled (ACK/NACK already sent)
    */
-  private async parseAndValidateMessage(
-    msg: amqp.ConsumeMessage
-  ): Promise<RequestEnvelope | null> {
+  private async parseAndValidateMessage(msg: amqp.ConsumeMessage): Promise<RequestEnvelope | null> {
     if (!this.channel) return null;
 
     const correlationId = msg.properties.correlationId;
