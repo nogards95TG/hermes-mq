@@ -189,11 +189,11 @@ export class RpcServer {
     handler: RpcHandler<TRequest, TResponse>
   ): void {
     if (!command) {
-      throw new ValidationError('Command is required');
+      throw ValidationError.commandRequired('Command is required');
     }
 
     if (typeof handler !== 'function') {
-      throw new ValidationError('Handler must be a function');
+      throw ValidationError.handlerRequired('Handler must be a function');
     }
 
     const normalizedCommand = command.toUpperCase();
@@ -240,7 +240,11 @@ export class RpcServer {
 
       // Setup channel error handlers
       this.channel.on('error', (error: Error) => {
-        this.logger.error('Channel error', error);
+        // Channel error detected - log and mark server as not running
+        // The channel will need to be recreated by calling start() again
+        this.logger.error('RpcServer channel error - server stopped, call start() to recover', error);
+        this.isRunning = false;
+        this.channel = null;
       });
 
       this.channel.on('close', () => {
@@ -422,7 +426,7 @@ export class RpcServer {
     const request: RequestEnvelope = parseResult.data;
 
     if (!request.command) {
-      throw new ValidationError('Command is required in request');
+      throw ValidationError.commandRequired('Command is required in request');
     }
 
     this.logger.debug('Received RPC request', {
@@ -461,7 +465,10 @@ export class RpcServer {
     const handler = this.handlers.get(normalizedCommand);
 
     if (!handler) {
-      throw new Error(`No handler registered for command: ${command}`);
+      throw ValidationError.handlerRequired(`No handler registered for command: ${command}`, {
+        command,
+        registeredCommands: Array.from(this.handlers.keys()),
+      });
     }
 
     return handler;

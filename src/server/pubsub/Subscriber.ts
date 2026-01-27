@@ -199,7 +199,7 @@ export class Subscriber {
    */
   constructor(config: SubscriberConfig) {
     if (!config.exchange) {
-      throw new ValidationError('Exchange is required', {});
+      throw ValidationError.exchangeRequired('Exchange is required');
     }
 
     this.config = {
@@ -245,11 +245,11 @@ export class Subscriber {
    */
   on<T = any>(eventPattern: string, handler: EventHandler<T>): this {
     if (!eventPattern || typeof eventPattern !== 'string') {
-      throw new ValidationError('Event pattern must be a non-empty string', {});
+      throw ValidationError.patternRequired('Event pattern must be a non-empty string');
     }
 
     if (typeof handler !== 'function') {
-      throw new ValidationError('Handler must be a function', {});
+      throw ValidationError.handlerRequired('Handler must be a function');
     }
 
     const regex = this.patternToRegex(eventPattern);
@@ -280,9 +280,8 @@ export class Subscriber {
     }
 
     if (this.handlers.length === 0) {
-      throw new ValidationError(
-        'No handlers registered. Use .on() to register at least one handler',
-        {}
+      throw ValidationError.handlerRequired(
+        'No handlers registered. Use .on() to register at least one handler'
       );
     }
 
@@ -572,6 +571,17 @@ export class Subscriber {
   /**
    * Execute handlers with error isolation (continue on error)
    */
+  /**
+   * Execute handlers in isolated mode where each handler failure is independent.
+   *
+   * In isolated mode, handler errors are logged and reported but do NOT prevent
+   * message acknowledgment. This is intentional by design to prevent poison messages
+   * from blocking the queue when individual handlers fail.
+   *
+   * @remarks
+   * This is a deliberate error suppression pattern - messages are ALWAYS ACKed
+   * regardless of handler success/failure. Use errorHandler callback to track failures.
+   */
   private async executeHandlersIsolated(
     matchingHandlers: HandlerRegistration[],
     data: any,
@@ -587,7 +597,7 @@ export class Subscriber {
     const failures = results.filter((r) => r.status === 'rejected');
 
     if (failures.length > 0) {
-      // Log failures but continue
+      // Intentional: Log failures but continue - errors are isolated per handler
       failures.forEach((failure: any) => {
         this.config.logger.error('Handler failed (isolated)', failure.reason as Error, {
           eventName: context.eventName,

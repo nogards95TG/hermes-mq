@@ -62,7 +62,7 @@ export class ChannelPool {
    */
   async acquire(): Promise<amqp.ConfirmChannel> {
     if (this.isDraining) {
-      throw new ChannelError('Channel pool is draining');
+      throw ChannelError.poolDraining('Channel pool is draining');
     }
 
     // Try to find available channel
@@ -98,9 +98,7 @@ export class ChannelPool {
         if (index !== -1) {
           this.pendingAcquires.splice(index, 1);
         }
-        reject(
-          new ChannelError('Channel acquire timeout', { timeout: this.config.acquireTimeout })
-        );
+        reject(ChannelError.timeout('Channel acquire timeout', { timeout: this.config.acquireTimeout }));
       }, this.config.acquireTimeout);
 
       this.pendingAcquires.push({ resolve, reject, timeout });
@@ -170,7 +168,7 @@ export class ChannelPool {
     // Reject all pending acquires
     for (const pending of this.pendingAcquires) {
       clearTimeout(pending.timeout);
-      pending.reject(new ChannelError('Pool is draining'));
+      pending.reject(ChannelError.poolDraining('Pool is draining'));
     }
     this.pendingAcquires = [];
 
@@ -214,7 +212,9 @@ export class ChannelPool {
 
       return channel;
     } catch (error) {
-      throw new ChannelError('Failed to create channel', { error: (error as Error).message });
+      throw ChannelError.creationFailed('Failed to create channel', {
+        error: (error as Error).message,
+      });
     }
   }
 
@@ -232,13 +232,22 @@ export class ChannelPool {
   }
 
   /**
-   * Destroy channel wrapper
+   * Destroy channel wrapper and remove it from the pool.
+   *
+   * @remarks
+   * Channel close errors are intentionally caught and logged at WARN level
+   * (not DEBUG) because they may indicate issues during cleanup/eviction.
+   * The channel is removed from the pool regardless of close success.
    */
   private async destroyWrapper(wrapper: ChannelWrapper): Promise<void> {
     try {
       await wrapper.channel.close();
     } catch (error) {
-      this.logger.debug('Error closing channel', { error: (error as Error).message });
+      // Intentionally suppressed: channel close errors during cleanup/eviction are not critical
+      // However, we log at WARN level for visibility in production
+      this.logger.warn('Error closing channel during cleanup', {
+        error: (error as Error).message,
+      });
     }
 
     const index = this.channels.indexOf(wrapper);

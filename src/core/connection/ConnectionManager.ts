@@ -93,7 +93,7 @@ export class ConnectionManager extends EventEmitter {
    */
   async getConnection(): Promise<amqp.Connection> {
     if (this.isClosed) {
-      throw new ConnectionError('ConnectionManager has been closed');
+      throw ConnectionError.closed('ConnectionManager has been closed');
     }
 
     if (this.connection && !this.isConnecting) {
@@ -158,7 +158,7 @@ export class ConnectionManager extends EventEmitter {
       return this.connection;
     } catch (error) {
       this.isConnecting = false;
-      const connectionError = new ConnectionError('Failed to connect to RabbitMQ', {
+      const connectionError = ConnectionError.failed('Failed to connect to RabbitMQ', {
         error: (error as Error).message,
       });
 
@@ -208,7 +208,12 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * Schedule reconnection attempt with exponential backoff
+   * Schedule reconnection attempt with exponential backoff.
+   *
+   * @remarks
+   * Connection errors within this method are intentionally caught and suppressed
+   * because they are already logged and emitted in the connect() method.
+   * The catch handler prevents unhandled promise rejection warnings.
    */
   private scheduleReconnect(): void {
     if (this.reconnectTimer || this.isClosed) return;
@@ -236,8 +241,12 @@ export class ConnectionManager extends EventEmitter {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect().catch(() => {
-        // Error already logged and emitted in connect()
+      this.connect().catch((error) => {
+        // Intentionally suppressed: errors are already logged and emitted in connect()
+        // This catch prevents unhandled promise rejection warnings
+        this.logger.debug('Reconnection attempt failed, will retry if attempts remain', {
+          error: (error as Error).message,
+        });
       });
     }, delay);
   }

@@ -8,6 +8,7 @@ import {
   SilentLogger,
   ValidationError,
   HermesError,
+  RetryExhaustedError,
   type RetryConfig,
   MetricsCollector,
   RETRY,
@@ -218,7 +219,7 @@ export class Publisher {
    */
   async publish<T = any>(eventName: string, data: T, options: PublishOptions = {}): Promise<void> {
     if (!eventName || typeof eventName !== 'string') {
-      throw new ValidationError('Event name must be a non-empty string', {});
+      throw ValidationError.eventNameRequired('Event name must be a non-empty string');
     }
 
     const channel = await this.ensureChannel();
@@ -335,7 +336,7 @@ export class Publisher {
     options: Omit<PublishOptions, 'exchange'> = {}
   ): Promise<void> {
     if (!Array.isArray(exchanges) || exchanges.length === 0) {
-      throw new ValidationError('Exchanges must be a non-empty array', {});
+      throw ValidationError.invalidConfig('Exchanges must be a non-empty array');
     }
 
     await Promise.all(
@@ -350,10 +351,15 @@ export class Publisher {
   }
 
   /**
-   * Close publisher and cleanup resources
+   * Close publisher and cleanup resources.
    *
    * Closes the channel and connection. After calling close(),
    * the publisher cannot be reused.
+   *
+   * @remarks
+   * Channel close errors are intentionally caught and logged at WARN level
+   * because they are not critical during cleanup operations. The publisher
+   * will continue to close the connection manager regardless of channel errors.
    */
   async close(): Promise<void> {
     this.assertedExchanges.clear();
@@ -362,7 +368,10 @@ export class Publisher {
       try {
         await this.channel.close();
       } catch (error) {
-        this.config.logger.warn('Error closing Publisher channel');
+        // Intentionally suppressed: channel close errors during cleanup are not critical
+        this.config.logger.warn('Error closing Publisher channel', {
+          error: (error as Error).message,
+        });
       }
       this.channel = undefined;
     }
@@ -395,7 +404,14 @@ export class Publisher {
     });
 
     channel.on('error', (error: Error) => {
-      this.config.logger.error('Publisher channel error:', error);
+      // Channel error detected - log and clear channel reference
+      // The channel will be recreated on next publish attempt via ensureChannel()
+      this.config.logger.error(
+        'Publisher channel error - channel will be recreated on next publish',
+        error
+      );
+      this.channel = undefined;
+      this.assertedExchanges.clear();
     });
 
     // Handle returned messages (mandatory flag)
@@ -488,9 +504,12 @@ export class Publisher {
     }
 
     // All retries failed
-    throw new HermesError(
+    throw new RetryExhaustedError(
       `Failed to publish after ${maxAttempts} attempts: ${lastError?.message}`,
-      'PUBLISH_ERROR'
+      {
+        attempts: maxAttempts,
+        lastError: lastError?.message,
+      }
     );
   }
 

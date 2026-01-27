@@ -67,6 +67,8 @@ export {
   ValidationError,
   MessageValidationError,
   MessageParsingError,
+  StateError,
+  RetryExhaustedError,
 } from './types/Errors';
 
 // Health Check

@@ -4,6 +4,7 @@ import {
   ConnectionManager,
   TimeoutError,
   ValidationError,
+  StateError,
   Logger,
   SilentLogger,
   RequestEnvelope,
@@ -230,13 +231,16 @@ export class RpcClient {
     }
   ): Promise<TResponse> {
     if (!command) {
-      throw new ValidationError('Command is required');
+      throw ValidationError.commandRequired('Command is required');
     }
 
     await this.initialize();
 
     if (!this.channel || !this.isReady) {
-      throw new Error('RpcClient is not ready');
+      throw new StateError('RpcClient is not ready', {
+        isReady: this.isReady,
+        hasChannel: !!this.channel,
+      });
     }
 
     const correlationId = randomUUID();
