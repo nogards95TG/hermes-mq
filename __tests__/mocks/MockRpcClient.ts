@@ -58,7 +58,7 @@ export class MockRpcClient {
     }
 
     if (!command || typeof command !== 'string') {
-      throw new ValidationError('Command must be a non-empty string', {});
+      throw ValidationError.commandRequired('Command must be a non-empty string');
     }
 
     const normalizedCommand = command.toUpperCase();

@@ -64,7 +64,7 @@ describe('MockRpcClient', () => {
     });
 
     it('should throw ValidationError when configured', async () => {
-      const validationError = new ValidationError('Invalid input');
+      const validationError = ValidationError.invalidConfig('Invalid input');
       mockClient.mockError('CREATE_USER', validationError);
 
       await expect(mockClient.send('CREATE_USER', { name: '' })).rejects.toThrow(ValidationError);

@@ -141,7 +141,7 @@ describe('RpcClient Integration Tests', () => {
 
       server.registerHandler('DIVIDE', (data: { a: number; b: number }) => {
         if (data.b === 0) {
-          throw new ValidationError('Cannot divide by zero', { a: data.a, b: data.b });
+          throw ValidationError.invalidConfig('Cannot divide by zero', { a: data.a, b: data.b });
         }
         return { result: data.a / data.b };
       });

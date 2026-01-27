@@ -46,7 +46,7 @@ export class MockPublisher {
     }
 
     if (!eventName || typeof eventName !== 'string') {
-      throw new ValidationError('Event name must be a non-empty string', {});
+      throw ValidationError.eventNameRequired('Event name must be a non-empty string');
     }
 
     const exchange = options?.exchange ?? this.defaultExchange;
@@ -81,7 +81,7 @@ export class MockPublisher {
     }
   ): Promise<void> {
     if (!Array.isArray(exchanges) || exchanges.length === 0) {
-      throw new ValidationError('Exchanges must be a non-empty array', {});
+      throw ValidationError.invalidConfig('Exchanges must be a non-empty array');
     }
 
     // Publish to each exchange
