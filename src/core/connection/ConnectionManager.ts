@@ -4,6 +4,7 @@ import { Logger, SilentLogger } from '../types/Logger';
 import { ConnectionError } from '../types/Errors';
 import type { DLQOptions } from '../types/Messages';
 import { TIME } from '../constants';
+import { asConnectionWithConfirm } from '../types/Amqp';
 
 /**
  * Connection configuration options
@@ -309,7 +310,7 @@ export class ConnectionManager extends EventEmitter {
 
     if (this.connection) {
       try {
-        await (this.connection as any).close();
+        await asConnectionWithConfirm(this.connection).close();
         this.logger.info('Connection closed gracefully');
       } catch (error) {
         this.logger.error('Error closing connection', error as Error);
@@ -350,7 +351,7 @@ export class ConnectionManager extends EventEmitter {
     options?: QueueAssertionOptions
   ): Promise<amqp.Replies.AssertQueue> {
     const connection = await this.getConnection();
-    const channel = (await (connection as any).createChannel()) as amqp.Channel;
+    const channel = await asConnectionWithConfirm(connection).createChannel();
 
     try {
       const queueArgs: Record<string, any> = options?.arguments ?? {};

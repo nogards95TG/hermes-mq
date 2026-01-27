@@ -42,6 +42,22 @@ export { JsonSerializer } from './types/Messages';
 export type { Logger } from './types/Logger';
 export { SilentLogger, ConsoleLogger } from './types/Logger';
 
+// AMQP Types
+export type {
+  ConnectionWithConfirm,
+  ExtendedError,
+  ChannelWithConnection,
+  ExtendedConfirmChannel,
+} from './types/Amqp';
+
+export {
+  isConnectionWithConfirm,
+  isExtendedError,
+  asConnectionWithConfirm,
+  asChannelWithConnection,
+  asExtendedConfirmChannel,
+} from './types/Amqp';
+
 // Errors
 export {
   HermesError,
@@ -77,4 +93,12 @@ export type {
 } from './utils/ConsumerReconnectionManager';
 
 // Constants
-export { TIME, LIMITS, RETRY, ACK_MODE, MALFORMED_MESSAGE_STRATEGY, EXCHANGE_TYPE, CONFIRM_MODE } from './constants';
+export {
+  TIME,
+  LIMITS,
+  RETRY,
+  ACK_MODE,
+  MALFORMED_MESSAGE_STRATEGY,
+  EXCHANGE_TYPE,
+  CONFIRM_MODE,
+} from './constants';

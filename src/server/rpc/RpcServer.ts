@@ -22,6 +22,7 @@ import {
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
+import { asConnectionWithConfirm, asChannelWithConnection, ExtendedError } from '../../core/types/Amqp';
 
 /**
  * RPC Server configuration
@@ -235,7 +236,7 @@ export class RpcServer {
 
     try {
       const connection = await this.connectionManager.getConnection();
-      this.channel = (await (connection as any).createConfirmChannel()) as amqp.ConfirmChannel;
+      this.channel = await asConnectionWithConfirm(connection).createConfirmChannel();
 
       // Setup channel error handlers
       this.channel.on('error', (error: Error) => {
@@ -305,9 +306,9 @@ export class RpcServer {
       this.logger.info('Re-registering consumer...');
 
       // Get or recreate channel
-      if (!this.channel || !(this.channel as any).connection) {
+      if (!this.channel || !asChannelWithConnection(this.channel).connection) {
         const connection = await this.connectionManager.getConnection();
-        this.channel = (await (connection as any).createConfirmChannel()) as amqp.ConfirmChannel;
+        this.channel = await asConnectionWithConfirm(connection).createConfirmChannel();
       }
 
       // Set prefetch
@@ -605,14 +606,15 @@ export class RpcServer {
     // Send error response
     if (replyTo && this.channel) {
       try {
+        const extendedError = error as ExtendedError;
         const response: ResponseEnvelope = {
           id: correlationId || 'unknown',
           timestamp: Date.now(),
           success: false,
           error: {
-            code: (error as any).name || 'HANDLER_ERROR',
-            message: (error as Error).message,
-            details: (error as any).details,
+            code: extendedError.name || 'HANDLER_ERROR',
+            message: extendedError.message,
+            details: extendedError.details,
           },
         };
 

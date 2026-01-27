@@ -13,6 +13,7 @@ import {
   MetricsCollector,
   TIME,
 } from '../../core';
+import { asConnectionWithConfirm, ExtendedError } from '../../core/types/Amqp';
 
 /**
  * RPC Client configuration
@@ -142,7 +143,7 @@ export class RpcClient {
 
     try {
       const connection = await this.connectionManager.getConnection();
-      this.channel = (await (connection as any).createConfirmChannel()) as amqp.ConfirmChannel;
+      this.channel = await asConnectionWithConfirm(connection).createConfirmChannel();
 
       // Setup channel error handlers
       this.channel.on('error', (error: Error) => {
@@ -394,9 +395,9 @@ export class RpcClient {
           );
         }
 
-        const error = new Error(response.error?.message || 'Unknown error');
+        const error: ExtendedError = new Error(response.error?.message || 'Unknown error');
         error.name = response.error?.code || 'RPC_ERROR';
-        (error as any).details = response.error?.details;
+        error.details = response.error?.details;
         pending.reject(error);
       }
     } catch (error) {

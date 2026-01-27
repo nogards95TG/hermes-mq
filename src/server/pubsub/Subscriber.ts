@@ -20,6 +20,7 @@ import {
   EXCHANGE_TYPE,
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
+import { asConnectionWithConfirm } from '../../core/types/Amqp';
 
 /**
  * Error handling configuration for subscribers
@@ -408,7 +409,7 @@ export class Subscriber {
     }
 
     const connection = await this.connectionManager.getConnection();
-    const channel = await (connection as any).createChannel();
+    const channel = await asConnectionWithConfirm(connection).createChannel();
     this.channel = channel;
 
     // Handle channel lifecycle

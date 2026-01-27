@@ -14,6 +14,7 @@ import {
   EXCHANGE_TYPE,
   CONFIRM_MODE,
 } from '../../core';
+import { asConnectionWithConfirm, asExtendedConfirmChannel } from '../../core/types/Amqp';
 
 /**
  * Publisher configuration
@@ -261,7 +262,7 @@ export class Publisher {
         // Wait for broker confirmation if enabled
         if (this.config.publisherConfirms) {
           if (this.config.confirmMode === 'sync') {
-            await (channel as any).waitForConfirms();
+            await asExtendedConfirmChannel(channel as any).waitForConfirms();
           }
           // Async mode: confirmations handled via channel.on('ack'/'nack')
         }
@@ -379,10 +380,10 @@ export class Publisher {
     const connection = await this.connectionManager.getConnection();
 
     // Create confirm channel if publisher confirms are enabled, otherwise regular channel
-    // Cast to any to access createChannel methods not defined in types but exist at runtime
+    const connWithConfirm = asConnectionWithConfirm(connection);
     const channel = this.config.publisherConfirms
-      ? await (connection as any).createConfirmChannel()
-      : await (connection as any).createChannel();
+      ? await connWithConfirm.createConfirmChannel()
+      : await connWithConfirm.createChannel();
 
     this.channel = channel;
 
