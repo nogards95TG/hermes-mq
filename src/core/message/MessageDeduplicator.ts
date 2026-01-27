@@ -1,4 +1,5 @@
 import { Message } from 'amqplib';
+import { createHash } from 'crypto';
 import { DeduplicationOptions } from '../types/Messages';
 
 /**
@@ -186,19 +187,10 @@ export class MessageDeduplicator {
   }
 
   /**
-   * Simple hash of message content
+   * Cryptographically secure hash of message content using SHA-256
    */
   private hashContent(content: Buffer): string {
-    let hash = 0;
-    const str = content.toString('base64');
-
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-
-    return `msg_${Math.abs(hash)}`;
+    return createHash('sha256').update(content).digest('hex');
   }
 
   /**
