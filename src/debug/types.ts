@@ -146,30 +146,6 @@ export interface DebugHandlerPerformance {
   }>;
 }
 
-export interface DebugConnectionHealth {
-  /** Connection status */
-  status: 'connected' | 'disconnected' | 'reconnecting';
-  /** Uptime in ms */
-  uptime: number;
-  /** RabbitMQ URL */
-  url: string;
-  /** Active channels count */
-  channelCount: number;
-  /** Channel details */
-  channels: Array<{
-    id: number;
-    type: 'rpc-server' | 'rpc-client' | 'publisher' | 'subscriber';
-    queue?: string;
-    exchange?: string;
-  }>;
-  /** Recent connection events */
-  events: Array<{
-    type: 'connected' | 'disconnected' | 'error' | 'heartbeat-missed';
-    timestamp: Date;
-    message: string;
-  }>;
-}
-
 export interface DebugServiceInfo {
   /** Service ID */
   id: string;
@@ -186,6 +162,7 @@ export interface DebugServiceInfo {
 }
 
 export type DebugEventType =
+  | 'message:sent'
   | 'message:received'
   | 'message:success'
   | 'message:error'

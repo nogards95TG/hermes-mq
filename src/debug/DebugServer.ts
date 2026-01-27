@@ -8,7 +8,6 @@ import type {
   DebugMessage,
   DebugEvent,
   DebugServiceInfo,
-  DebugConnectionHealth,
 } from './types';
 import { MessageStore } from './MessageStore';
 import { Logger } from '../core/types/Logger';
@@ -21,10 +20,13 @@ import { Logger } from '../core/types/Logger';
  * pub/sub messages, connection health, and service status.
  *
  * **Architecture:**
- * - HTTP Server: Serves static UI files and REST API endpoints
+ * - HTTP Server: Serves static UI files (HTML, CSS, JS)
  * - WebSocket Server: Broadcasts real-time updates to connected clients
  * - MessageStore: In-memory circular buffer for storing recent messages
  * - Event Processing: Converts DebugEvents from DebugEmitters into DebugMessages
+ *
+ * **Communication:**
+ * All data is delivered via WebSocket for real-time updates. No REST API endpoints.
  *
  * **Security Features:**
  * - Path traversal prevention via file whitelist
@@ -80,15 +82,12 @@ import { Logger } from '../core/types/Logger';
  * const response = await client.call('user.create', { name: 'John' });
  * // Message appears in debug UI in real-time
  * ```
- *
- * @public
  */
 export class DebugServer {
   private httpServer: ReturnType<typeof createServer> | null = null;
   private wss: WebSocketServer | null = null;
   private messageStore: MessageStore;
   private services: Map<string, DebugServiceInfo> = new Map();
-  private connectionHealth: DebugConnectionHealth | null = null;
   private logger: Logger;
   private readonly config: Required<DebugConfig['webUI']> & Pick<DebugConfig, 'snapshot'>;
 
@@ -106,12 +105,10 @@ export class DebugServer {
    *   snapshot: { maxMessages: 1000 },
    * });
    * ```
-   *
-   * @public
    */
   constructor(config: DebugConfig, logger: Logger = console) {
     this.config = {
-      port: config.webUI?.port || 3333,
+      port: config.webUI?.port || 15027,
       autoOpen: config.webUI?.autoOpen ?? false,
       host: config.webUI?.host || '0.0.0.0',
       cors: config.webUI?.cors ?? true,
@@ -138,8 +135,6 @@ export class DebugServer {
    * await server.start();
    * // Debug UI now available at http://localhost:3333
    * ```
-   *
-   * @public
    */
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -158,7 +153,7 @@ export class DebugServer {
               messages: this.messageStore.getAll(),
               stats: this.messageStore.getStats(),
               services: Array.from(this.services.values()),
-              connectionHealth: this.connectionHealth,
+              handlerPerformance: this.messageStore.getHandlerPerformance(),
             },
           });
 
@@ -318,6 +313,14 @@ export class DebugServer {
       type: 'stats',
       data: this.messageStore.getStats(),
     });
+
+    // Update handler performance if message has duration
+    if (message.duration !== undefined) {
+      this.broadcast({
+        type: 'handler-performance',
+        data: this.messageStore.getHandlerPerformance(),
+      });
+    }
   }
 
   /**
@@ -381,44 +384,11 @@ export class DebugServer {
     });
   }
 
-  /**
-   * Update RabbitMQ connection health information
-   *
-   * Updates the current connection health status and broadcasts it to all connected
-   * clients. Includes connection status, uptime, channel information, and recent events.
-   *
-   * @param health - Current connection health information
-   *
-   * @example
-   * ```typescript
-   * server.updateConnectionHealth({
-   *   status: 'connected',
-   *   uptime: 12345,
-   *   url: 'amqp://localhost:5672',
-   *   channelCount: 3,
-   *   channels: [{ id: '1', type: 'rpc', queue: 'user.queue' }],
-   *   events: [
-   *     { type: 'connected', timestamp: new Date(), message: 'Connected to RabbitMQ' }
-   *   ],
-   * });
-   * ```
-   *
-   * @public
-   */
-  updateConnectionHealth(health: DebugConnectionHealth): void {
-    this.connectionHealth = health;
-
-    this.broadcast({
-      type: 'connection-health',
-      data: health,
-    });
-  }
-
   private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
     // CORS headers
     if (this.config.cors) {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
       if (req.method === 'OPTIONS') {
@@ -430,61 +400,8 @@ export class DebugServer {
 
     const url = req.url || '/';
 
-    // API endpoints
-    if (url.startsWith('/api/')) {
-      this.handleApiRequest(req, res, url);
-      return;
-    }
-
-    // Serve static files
+    // Serve static files only - all data is delivered via WebSocket
     this.serveStaticFile(res, url);
-  }
-
-  private handleApiRequest(_req: IncomingMessage, res: ServerResponse, url: string): void {
-    res.setHeader('Content-Type', 'application/json');
-
-    try {
-      if (url === '/api/messages') {
-        // Get all messages
-        res.writeHead(200);
-        res.end(JSON.stringify(this.messageStore.getAll()));
-      } else if (url.startsWith('/api/messages/')) {
-        // Get message by ID
-        const id = url.split('/')[3];
-        const message = this.messageStore.getById(id);
-
-        if (message) {
-          res.writeHead(200);
-          res.end(JSON.stringify(message));
-        } else {
-          res.writeHead(404);
-          res.end(JSON.stringify({ error: 'Message not found' }));
-        }
-      } else if (url === '/api/stats') {
-        // Get statistics
-        res.writeHead(200);
-        res.end(JSON.stringify(this.messageStore.getStats()));
-      } else if (url === '/api/performance') {
-        // Get handler performance
-        res.writeHead(200);
-        res.end(JSON.stringify(this.messageStore.getHandlerPerformance()));
-      } else if (url === '/api/services') {
-        // Get registered services
-        res.writeHead(200);
-        res.end(JSON.stringify(Array.from(this.services.values())));
-      } else if (url === '/api/health') {
-        // Get connection health
-        res.writeHead(200);
-        res.end(JSON.stringify(this.connectionHealth));
-      } else {
-        res.writeHead(404);
-        res.end(JSON.stringify({ error: 'Not found' }));
-      }
-    } catch (error) {
-      this.logger.error('[DebugServer] API error:', error as Error);
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: 'Internal server error' }));
-    }
   }
 
   private async serveStaticFile(res: ServerResponse, url: string): Promise<void> {
@@ -522,52 +439,29 @@ export class DebugServer {
     }
   }
 
-  private handleClientMessage(ws: WebSocket, message: unknown): void {
+  private handleClientMessage(_ws: WebSocket, message: unknown): void {
     // Type guard for client message
     if (!this.isValidClientMessage(message)) {
       this.logger.warn('[DebugServer] Invalid client message format');
       return;
     }
 
-    switch (message.type) {
-      case 'get-messages':
-        this.sendToClient(ws, {
-          type: 'messages',
-          data: this.messageStore.filter(message.filters || {}),
-        });
-        break;
-
-      case 'get-stats':
-        this.sendToClient(ws, {
-          type: 'stats',
-          data: this.messageStore.getStats(),
-        });
-        break;
-
-      case 'get-performance':
-        this.sendToClient(ws, {
-          type: 'performance',
-          data: this.messageStore.getHandlerPerformance(),
-        });
-        break;
-
-      case 'clear-messages':
-        this.messageStore.clear();
-        this.broadcast({
-          type: 'messages-cleared',
-          data: null,
-        });
-        break;
-
-      default:
-        this.logger.warn(`[DebugServer] Unknown message type: ${message.type}`);
+    // Only handle clear-messages - all data queries are served via initial-data on connect
+    if (message.type === 'clear-messages') {
+      this.messageStore.clear();
+      this.broadcast({
+        type: 'messages-cleared',
+        data: null,
+      });
+    } else {
+      this.logger.warn(`[DebugServer] Unknown message type: ${message.type}`);
     }
   }
 
   /**
    * Type guard for client WebSocket messages
    */
-  private isValidClientMessage(message: unknown): message is { type: string; filters?: any } {
+  private isValidClientMessage(message: unknown): message is { type: string } {
     return (
       typeof message === 'object' &&
       message !== null &&
@@ -601,6 +495,18 @@ export class DebugServer {
     };
 
     this.addMessage(message);
+
+    // Update service message count if service exists
+    if (event.serviceId) {
+      const service = this.services.get(event.serviceId);
+      if (service) {
+        service.messageCount++;
+        this.broadcast({
+          type: 'service-update',
+          data: service,
+        });
+      }
+    }
   }
 
   /**
@@ -621,55 +527,9 @@ export class DebugServer {
     return typeof data === 'object' && data !== null;
   }
 
-  private handleConnectionEvent(event: DebugEvent): void {
-    // Type guard and update connection health based on event
-    if (!this.isConnectionEventData(event.data)) {
-      this.logger.warn('[DebugServer] Invalid connection event data format');
-      return;
-    }
-
-    const eventData = event.data;
-
-    if (!this.connectionHealth) {
-      this.connectionHealth = {
-        status: 'disconnected',
-        uptime: 0,
-        url: eventData.url || '',
-        channelCount: 0,
-        channels: [],
-        events: [],
-      };
-    }
-
-    // Create new array to avoid race conditions during broadcast
-    const newEvent = {
-      type: this.getHealthEventType(event.type),
-      timestamp: event.timestamp,
-      message: eventData.message || '',
-    };
-
-    // Keep last 50 events - create new array to avoid mutation during iteration
-    const updatedEvents = [newEvent, ...this.connectionHealth.events].slice(0, 50);
-    this.connectionHealth.events = updatedEvents;
-
-    if (event.type === 'connection:connected') {
-      this.connectionHealth.status = 'connected';
-    } else if (event.type === 'connection:disconnected') {
-      this.connectionHealth.status = 'disconnected';
-    }
-
-    this.updateConnectionHealth(this.connectionHealth);
-  }
-
-  /**
-   * Type guard for connection event data
-   */
-  private isConnectionEventData(data: unknown): data is {
-    url?: string;
-    message?: string;
-    error?: Error;
-  } {
-    return typeof data === 'object' && data !== null;
+  private handleConnectionEvent(_event: DebugEvent): void {
+    // Connection events are currently not displayed in the UI
+    // This handler is kept for future implementation if needed
   }
 
   private handleServiceEvent(event: DebugEvent): void {
@@ -740,13 +600,6 @@ export class DebugServer {
     if (type === 'message:error') return 'error';
     if (type === 'message:timeout') return 'timeout';
     return 'pending';
-  }
-
-  private getHealthEventType(type: string): DebugConnectionHealth['events'][0]['type'] {
-    if (type === 'connection:connected') return 'connected';
-    if (type === 'connection:disconnected') return 'disconnected';
-    if (type === 'connection:error') return 'error';
-    return 'error';
   }
 
   /**

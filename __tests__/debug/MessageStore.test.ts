@@ -145,12 +145,6 @@ describe('MessageStore', () => {
       expect(filtered[0].status).toBe('error');
     });
 
-    it('should filter by type', () => {
-      const filtered = store.filter({ type: 'rpc-response' });
-      expect(filtered).toHaveLength(1);
-      expect(filtered[0].type).toBe('rpc-response');
-    });
-
     it('should filter by search text in id, command, queue', () => {
       const filtered = store.filter({ search: 'msg-2' });
       expect(filtered).toHaveLength(1);
@@ -168,44 +162,17 @@ describe('MessageStore', () => {
       expect(filtered.some(m => m.id === 'msg-search')).toBe(true);
     });
 
-    it('should filter by time range', () => {
-      const now = new Date();
-      const past = new Date(now.getTime() - 60000);
-      const future = new Date(now.getTime() + 60000);
-
-      store.add(createMessage({
-        id: 'msg-past',
-        timestamp: new Date(past.getTime() - 10000)
-      }));
-      store.add(createMessage({
-        id: 'msg-now',
-        timestamp: now
-      }));
-
-      const filtered = store.filter({
-        startTime: past,
-        endTime: future
-      });
-
-      expect(filtered.some(m => m.id === 'msg-now')).toBe(true);
-      expect(filtered.some(m => m.id === 'msg-past')).toBe(false);
-    });
-
-    it('should apply limit', () => {
-      const filtered = store.filter({ limit: 2 });
-      expect(filtered).toHaveLength(2);
-    });
-
     it('should combine multiple filters', () => {
       const filtered = store.filter({
         queue: 'queue-a',
-        status: 'success',
-        limit: 1
+        status: 'success'
       });
 
-      expect(filtered).toHaveLength(1);
-      expect(filtered[0].queue).toBe('queue-a');
-      expect(filtered[0].status).toBe('success');
+      expect(filtered.length).toBeGreaterThan(0);
+      filtered.forEach(msg => {
+        expect(msg.queue).toBe('queue-a');
+        expect(msg.status).toBe('success');
+      });
     });
 
     it('should return all messages when no filters provided', () => {

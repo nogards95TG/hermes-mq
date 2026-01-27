@@ -291,7 +291,7 @@ function updateStats() {
 }
 
 function renderServices() {
-  const container = document.getElementById('services-list');
+  const container = document.getElementById('services-list-main');
   if (!container) return;
   
   const services = Array.from(state.services.values());
@@ -728,7 +728,8 @@ function setView(view) {
     live: 'Live Messages',
     history: 'Message History',
     handlers: 'Handler Performance',
-    events: 'Event Stream'
+    events: 'Event Stream',
+    services: 'Connected Services'
   };
   document.getElementById('headerTitle').textContent = titles[view];
   

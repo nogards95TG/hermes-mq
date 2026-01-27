@@ -106,142 +106,6 @@ describe('DebugServer', () => {
     });
   });
 
-  describe('API endpoints', () => {
-    beforeEach(async () => {
-      await server.start();
-    });
-
-    it('GET /api/messages should return messages', async () => {
-      const message: DebugMessage = {
-        id: 'test-msg-1',
-        timestamp: new Date(),
-        type: 'rpc-request',
-        queue: 'test-queue',
-        command: 'test.command',
-        status: 'success',
-        correlationId: 'corr-1',
-        payload: { test: 'data' },
-      };
-
-      server.addMessage(message);
-
-      const res = await fetch(`http://localhost:${testPort}/api/messages`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(Array.isArray(data)).toBe(true);
-      expect(data).toHaveLength(1);
-      expect(data[0].id).toBe('test-msg-1');
-    });
-
-    it('GET /api/messages/:id should return specific message', async () => {
-      const message: DebugMessage = {
-        id: 'specific-msg',
-        timestamp: new Date(),
-        type: 'rpc-request',
-        queue: 'test-queue',
-        command: 'test.command',
-        status: 'success',
-        correlationId: 'corr-1',
-        payload: {},
-      };
-
-      server.addMessage(message);
-
-      const res = await fetch(`http://localhost:${testPort}/api/messages/specific-msg`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(data.id).toBe('specific-msg');
-    });
-
-    it('GET /api/messages/:id should return 404 for non-existent message', async () => {
-      const res = await fetch(`http://localhost:${testPort}/api/messages/non-existent`);
-      const data = await res.json();
-
-      expect(res.status).toBe(404);
-      expect(data.error).toBe('Message not found');
-    });
-
-    it('GET /api/stats should return statistics', async () => {
-      server.addMessage({
-        id: 'msg-1',
-        timestamp: new Date(),
-        type: 'rpc-request',
-        queue: 'test',
-        command: 'cmd',
-        status: 'success',
-        correlationId: 'corr-1',
-        payload: {},
-        duration: 100,
-      });
-
-      const res = await fetch(`http://localhost:${testPort}/api/stats`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(data).toHaveProperty('totalMessages');
-      expect(data).toHaveProperty('successCount');
-      expect(data.totalMessages).toBe(1);
-    });
-
-    it('GET /api/performance should return handler performance', async () => {
-      const res = await fetch(`http://localhost:${testPort}/api/performance`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(Array.isArray(data)).toBe(true);
-    });
-
-    it('GET /api/services should return registered services', async () => {
-      const service: DebugServiceInfo = {
-        id: 'service-1',
-        type: 'rpc-server',
-        name: 'test-service',
-        status: 'active',
-        startedAt: new Date(),
-        messageCount: 0,
-      };
-
-      server.registerService(service);
-
-      const res = await fetch(`http://localhost:${testPort}/api/services`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(Array.isArray(data)).toBe(true);
-      expect(data).toHaveLength(1);
-      expect(data[0].id).toBe('service-1');
-    });
-
-    it('GET /api/health should return connection health', async () => {
-      const health = {
-        status: 'connected' as const,
-        uptime: 1000,
-        url: 'amqp://localhost',
-        channelCount: 2,
-        channels: [],
-        events: [],
-      };
-
-      server.updateConnectionHealth(health);
-
-      const res = await fetch(`http://localhost:${testPort}/api/health`);
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(data.status).toBe('connected');
-      expect(data.uptime).toBe(1000);
-    });
-
-    it('should return 404 for unknown API endpoints', async () => {
-      const res = await fetch(`http://localhost:${testPort}/api/unknown`);
-      const data = await res.json();
-
-      expect(res.status).toBe(404);
-      expect(data.error).toBe('Not found');
-    });
-  });
 
   describe('WebSocket', () => {
     beforeEach(async () => {
@@ -315,26 +179,6 @@ describe('DebugServer', () => {
             });
           } else if (parsed.type === 'message' && receivedInitial) {
             expect(parsed.data.id).toBe('broadcast-msg');
-            ws.close();
-            resolve();
-          }
-        });
-      });
-    });
-
-    it('should handle client messages - get-stats', () => {
-      return new Promise<void>((resolve) => {
-        const ws = new WebSocket(`ws://localhost:${testPort}`);
-
-        ws.on('open', () => {
-          ws.send(JSON.stringify({ type: 'get-stats' }));
-        });
-
-        ws.on('message', (data: Buffer) => {
-          const parsed = JSON.parse(data.toString());
-
-          if (parsed.type === 'stats') {
-            expect(parsed.data).toHaveProperty('totalMessages');
             ws.close();
             resolve();
           }
@@ -522,8 +366,10 @@ describe('DebugServer', () => {
 
       await customServer.start();
 
-      const res = await fetch(`http://localhost:${customPort}/api/stats`);
+      // Test that server is listening on custom port by fetching index
+      const res = await fetch(`http://localhost:${customPort}/`);
       expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/html');
 
       await customServer.stop();
     });

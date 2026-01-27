@@ -12,7 +12,10 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">H</div>
-        <span class="sidebar-title">Hermes MQ</span>
+        <div class="sidebar-title-wrap">
+          <div class="sidebar-title">Hermes MQ</div>
+          <div class="sidebar-subtitle">Debug Dashboard</div>
+        </div>
       </div>
       
       <nav class="sidebar-nav">
@@ -36,6 +39,14 @@
               <path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/>
             </svg>
             <span class="nav-text">History</span>
+          </div>
+          <div class="nav-item" data-view="services">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span class="nav-text">Connected Services</span>
           </div>
         </div>
         
@@ -61,7 +72,7 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/>
           </svg>
-          <span class="nav-text">Collapse</span>
+          <span class="collapse-text">Collapse</span>
         </button>
       </div>
     </aside>
@@ -156,15 +167,6 @@
                 Errors & Slow Requests
               </div>
               <canvas class="chart-canvas" id="chart-errors"></canvas>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <span class="panel-title">Connected Services</span>
-            </div>
-            <div class="services-grid" id="services-list">
-              <div style="padding: 20px; text-align: center; color: #666;">No services connected</div>
             </div>
           </div>
 
@@ -288,6 +290,18 @@
             </div>
             <div id="event-stream" style="flex: 1; overflow-y: auto; min-height: 0;">
               <div style="padding: 20px; text-align: center; color: #666;">No events yet</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Services View -->
+        <div class="view" id="view-services">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Connected Services</span>
+            </div>
+            <div class="services-grid" id="services-list-main">
+              <div style="padding: 20px; text-align: center; color: #666;">No services connected</div>
             </div>
           </div>
         </div>

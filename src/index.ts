@@ -46,7 +46,6 @@ export type {
   DebugError,
   DebugStats,
   DebugHandlerPerformance,
-  DebugConnectionHealth,
   DebugServiceInfo,
   DebugEvent,
   DebugEventType,

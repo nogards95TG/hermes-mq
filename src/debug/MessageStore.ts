@@ -71,7 +71,6 @@ import type { DebugMessage, DebugStats, DebugHandlerPerformance } from './types'
 export class MessageStore {
   private messages: DebugMessage[] = [];
   private readonly maxMessages: number;
-  private performanceData: Map<string, number[]> = new Map();
 
   /**
    * Create a new MessageStore instance
@@ -95,8 +94,7 @@ export class MessageStore {
    * Add a message to the store
    *
    * Adds a new message to the front of the circular buffer. If the buffer is full,
-   * the oldest message is automatically removed. Also tracks performance metrics
-   * for commands with duration data.
+   * the oldest message is automatically removed.
    *
    * @param message - The debug message to add
    *
@@ -119,20 +117,6 @@ export class MessageStore {
    */
   add(message: DebugMessage): void {
     this.messages.unshift(message); // Add to front
-
-    // Keep performance tracking
-    if (message.duration !== undefined) {
-      const key = `${message.queue}:${message.command}`;
-      const durations = this.performanceData.get(key) || [];
-      durations.push(message.duration);
-      
-      // Keep last 100 durations per command
-      if (durations.length > 100) {
-        durations.shift();
-      }
-      
-      this.performanceData.set(key, durations);
-    }
 
     // Circular buffer: remove oldest if exceeds limit
     if (this.messages.length > this.maxMessages) {
@@ -173,11 +157,7 @@ export class MessageStore {
    * @param filters.queue - Exact match on queue name
    * @param filters.command - Exact match on command name
    * @param filters.status - Exact match on status (success/error/timeout/pending)
-   * @param filters.type - Exact match on message type
    * @param filters.search - Full-text search across id, command, queue, and payload
-   * @param filters.startTime - Messages after this timestamp
-   * @param filters.endTime - Messages before this timestamp
-   * @param filters.limit - Maximum number of results to return
    *
    * @returns Filtered messages (newest first)
    *
@@ -195,18 +175,7 @@ export class MessageStore {
    * ```typescript
    * // Search for "John" anywhere in messages
    * const results = store.filter({
-   *   search: 'John',
-   *   limit: 50
-   * });
-   * ```
-   *
-   * @example Time Range
-   * ```typescript
-   * // Get messages from last hour with errors
-   * const oneHourAgo = new Date(Date.now() - 3600000);
-   * const errors = store.filter({
-   *   status: 'error',
-   *   startTime: oneHourAgo
+   *   search: 'John'
    * });
    * ```
    *
@@ -216,30 +185,19 @@ export class MessageStore {
     queue?: string;
     command?: string;
     status?: string;
-    type?: string;
     search?: string;
-    startTime?: Date;
-    endTime?: Date;
-    limit?: number;
   }): DebugMessage[] {
-    let filtered = this.messages;
-
     // Early exit if no filters
     if (Object.keys(filters).length === 0) {
       return [...this.messages];
     }
 
     // Single-pass filter for better performance
-    filtered = filtered.filter((m) => {
+    return this.messages.filter((m) => {
       // Exact match filters (fast)
       if (filters.queue && m.queue !== filters.queue) return false;
       if (filters.command && m.command !== filters.command) return false;
       if (filters.status && m.status !== filters.status) return false;
-      if (filters.type && m.type !== filters.type) return false;
-
-      // Time range filters
-      if (filters.startTime && m.timestamp < filters.startTime) return false;
-      if (filters.endTime && m.timestamp > filters.endTime) return false;
 
       // Text search filter (expensive - do last)
       if (filters.search) {
@@ -266,13 +224,6 @@ export class MessageStore {
 
       return true;
     });
-
-    // Apply limit after filtering
-    if (filters.limit && filters.limit > 0) {
-      filtered = filtered.slice(0, filters.limit);
-    }
-
-    return filtered;
   }
 
   /**
@@ -472,9 +423,9 @@ export class MessageStore {
   }
 
   /**
-   * Clear all stored messages and performance data
+   * Clear all stored messages
    *
-   * Removes all messages from the store and resets performance tracking.
+   * Removes all messages from the store.
    * Useful for starting fresh or when memory usage is a concern.
    *
    * @example
@@ -487,7 +438,6 @@ export class MessageStore {
    */
   clear(): void {
     this.messages = [];
-    this.performanceData.clear();
   }
 
   /**

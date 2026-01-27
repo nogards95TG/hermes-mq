@@ -12,6 +12,7 @@ import {
   Serializer,
   JsonSerializer,
   MetricsCollector,
+  HermesError,
 } from '../../core';
 import { DebugEmitter } from '../../debug/DebugEmitter';
 import type { DebugConfig } from '../../debug/types';
@@ -49,6 +50,7 @@ interface PendingRequest<T> {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
   timestamp: number;
+  command: string;
   abortController?: AbortController;
 }
 
@@ -271,6 +273,16 @@ export class RpcClient {
           );
         }
 
+        // Debug: Emit timeout event
+        if (this.debugEmitter) {
+          this.debugEmitter.emitMessageTimeout({
+            id: messageId,
+            queue: this.config.queueName,
+            command,
+            duration: timeout,
+          });
+        }
+
         reject(
           new TimeoutError(`RPC request timeout after ${timeout}ms`, {
             command,
@@ -286,6 +298,7 @@ export class RpcClient {
         reject,
         timeout: timeoutHandle,
         timestamp: Date.now(),
+        command: command.toUpperCase(),
       });
 
       // Handle AbortSignal
@@ -295,7 +308,7 @@ export class RpcClient {
           if (pending) {
             clearTimeout(pending.timeout);
             this.pendingRequests.delete(correlationId);
-            reject(new Error('Request aborted'));
+            reject(new HermesError('Request aborted', 'REQUEST_ABORTED'));
           }
         });
       }
@@ -320,7 +333,7 @@ export class RpcClient {
         });
 
         if (this.debugEmitter) {
-          this.debugEmitter.emitMessageReceived({
+          this.debugEmitter.emitMessageSent({
             id: messageId,
             type: 'rpc-request',
             queue: this.config.queueName,
@@ -366,6 +379,18 @@ export class RpcClient {
     try {
       const response: ResponseEnvelope = this.serializer.decode(msg.content);
 
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageReceived({
+          id: msg.properties.messageId || correlationId,
+          type: 'rpc-response',
+          queue: this.config.queueName,
+          command: pending.command,
+          correlationId: correlationId,
+          payload: response.data,
+          metadata: undefined,
+        });
+      }
+
       if (response.success) {
         // Track successful RPC request
         if (this.config.metrics) {
@@ -390,7 +415,8 @@ export class RpcClient {
         if (this.debugEmitter) {
           this.debugEmitter.emitMessageSuccess({
             id: msg.properties.messageId || correlationId,
-            command: 'response', // We don't have the original command here
+            queue: this.config.queueName,
+            command: pending.command,
             duration: duration * 1000, // Convert back to ms
             response: response.data,
           });
@@ -421,12 +447,13 @@ export class RpcClient {
         const error = new Error(response.error?.message || 'Unknown error');
         error.name = response.error?.code || 'RPC_ERROR';
         (error as any).details = response.error?.details;
-        
+
         // Debug: Emit message error event
         if (this.debugEmitter) {
           this.debugEmitter.emitMessageError({
             id: msg.properties.messageId || correlationId,
-            command: 'response',
+            queue: this.config.queueName,
+            command: pending.command,
             duration: duration * 1000,
             error: {
               code: error.name,
@@ -435,10 +462,10 @@ export class RpcClient {
             },
           });
         }
-        
+
         pending.reject(error);
       }
-    } catch (error) {
+    } catch (error: any) {
       // Track decode error
       if (this.config.metrics) {
         this.config.metrics.incrementCounter(
@@ -449,6 +476,20 @@ export class RpcClient {
           },
           1
         );
+      }
+
+      if (this.debugEmitter) {
+        this.debugEmitter.emitMessageError({
+          id: msg.properties.messageId || correlationId,
+          queue: this.config.queueName,
+          command: pending.command,
+          duration: Date.now() - pending.timestamp,
+          error: {
+            code: 'DECODE_ERROR',
+            message: (error as Error).message,
+            context: error.details,
+          },
+        });
       }
 
       pending.reject(new Error(`Failed to decode response: ${(error as Error).message}`));

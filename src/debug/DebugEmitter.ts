@@ -104,6 +104,51 @@ export class DebugEmitter extends EventEmitter {
   }
 
   /**
+   * Emit a message sent event
+   *
+   * Call this when a message is being sent to the message queue (before actual send).
+   * Useful for tracking outgoing requests/publications and debugging message flow.
+   *
+   * @param data - Message sent data
+   * @param data.id - Unique message identifier
+   * @param data.type - Type of message (rpc-request, rpc-response, pubsub-publish, pubsub-consume)
+   * @param data.queue - Queue or exchange name
+   * @param data.command - Command or pattern name
+   * @param data.correlationId - Correlation ID for request/response matching
+   * @param data.payload - Message payload
+   * @param data.metadata - Optional metadata
+   *
+   * @example
+   * ```typescript
+   * // In RpcClient, when sending a request
+   * emitter.emitMessageSent({
+   *   id: 'msg-123',
+   *   type: 'rpc-request',
+   *   queue: 'user.service',
+   *   command: 'user.create',
+   *   correlationId: msg.properties.correlationId,
+   *   payload: { name: 'John' }
+   * });
+   * ```
+   *
+   * @public
+   */
+  emitMessageSent(data: {
+    id: string;
+    type: DebugMessage['type'];
+    queue: string;
+    command: string;
+    correlationId: string;
+    payload: unknown;
+    metadata?: Record<string, unknown>;
+  }): void {
+    if (this.isDestroyed) {
+      return;
+    }
+    this.emitEvent('message:sent', data);
+  }
+
+  /**
    * Emit a message received event
    *
    * Call this when a message is received from the message queue but before processing.
@@ -156,6 +201,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @param data - Message success data
    * @param data.id - Message identifier (same as in emitMessageReceived)
+   * @param data.queue - Queue name
    * @param data.command - Command name
    * @param data.duration - Processing duration in milliseconds
    * @param data.response - Optional response payload
@@ -177,6 +223,7 @@ export class DebugEmitter extends EventEmitter {
    */
   emitMessageSuccess(data: {
     id: string;
+    queue: string;
     command: string;
     duration: number;
     response?: unknown;
@@ -195,6 +242,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @param data - Message error data
    * @param data.id - Message identifier
+   * @param data.queue - Queue name
    * @param data.command - Command name
    * @param data.duration - Processing duration before error (milliseconds)
    * @param data.error - Error details
@@ -221,11 +269,10 @@ export class DebugEmitter extends EventEmitter {
    *   });
    * }
    * ```
-   *
-   * @public
    */
   emitMessageError(data: {
     id: string;
+    queue: string;
     command: string;
     duration: number;
     error: {
@@ -249,6 +296,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @param data - Message timeout data
    * @param data.id - Message identifier
+   * @param data.queue - Queue name
    * @param data.command - Command name
    * @param data.duration - Duration before timeout (milliseconds)
    *
@@ -264,11 +312,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @public
    */
-  emitMessageTimeout(data: {
-    id: string;
-    command: string;
-    duration: number;
-  }): void {
+  emitMessageTimeout(data: { id: string; queue: string; command: string; duration: number }): void {
     if (this.isDestroyed) {
       return;
     }
@@ -294,10 +338,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @public
    */
-  emitConnectionConnected(data: {
-    url: string;
-    message?: string;
-  }): void {
+  emitConnectionConnected(data: { url: string; message?: string }): void {
     if (this.isDestroyed) {
       return;
     }
@@ -321,9 +362,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @public
    */
-  emitConnectionDisconnected(data: {
-    message?: string;
-  }): void {
+  emitConnectionDisconnected(data: { message?: string }): void {
     if (this.isDestroyed) {
       return;
     }
@@ -349,10 +388,7 @@ export class DebugEmitter extends EventEmitter {
    *
    * @public
    */
-  emitConnectionError(data: {
-    error: Error;
-    message?: string;
-  }): void {
+  emitConnectionError(data: { error: Error; message?: string }): void {
     if (this.isDestroyed) {
       return;
     }

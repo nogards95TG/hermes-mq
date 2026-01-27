@@ -155,7 +155,7 @@ export class RpcServer {
     this.serializer = config.serializer || new JsonSerializer();
     this.messageParser = new MessageParser(this.config.messageValidation);
     this.deduplicator = new MessageDeduplicator(this.config.deduplication);
-    
+
     // Initialize debug emitter if enabled
     this.serviceId = `rpc-server:${config.queueName}:${Date.now()}`;
     if (config.debug?.enabled) {
@@ -450,6 +450,7 @@ export class RpcServer {
       // Debug: Emit message success event
       if (this.debugEmitter) {
         this.debugEmitter.emitMessageSuccess({
+          queue: this.config.queueName,
           id: msg.properties.messageId || correlationId || 'unknown',
           command: request.command,
           duration,
@@ -488,10 +489,11 @@ export class RpcServer {
 
       // Debug: Emit message error event
       const errorObj = error as Error;
-      
+
       if (this.debugEmitter) {
         this.debugEmitter.emitMessageError({
           id: msg.properties.messageId || correlationId || 'unknown',
+          queue: this.config.queueName,
           command: 'unknown', // We might not have parsed the command yet
           duration: 0,
           error: {

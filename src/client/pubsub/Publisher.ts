@@ -249,7 +249,7 @@ export class Publisher {
     const payload = this.config.serializer.encode(envelope);
 
     if (this.debugEmitter) {
-      this.debugEmitter.emitMessageReceived({
+      this.debugEmitter.emitMessageSent({
         id: messageId,
         type: 'pubsub-publish',
         queue: exchange,
@@ -300,6 +300,7 @@ export class Publisher {
         if (this.debugEmitter) {
           this.debugEmitter.emitMessageSuccess({
             id: messageId,
+            queue: exchange,
             command: eventName,
             duration: Date.now() - timestamp,
           });
@@ -327,6 +328,7 @@ export class Publisher {
           this.debugEmitter.emitMessageError({
             id: messageId,
             command: eventName,
+            queue: exchange,
             duration: Date.now() - timestamp,
             error: {
               code: 'PUBLISH_ERROR',

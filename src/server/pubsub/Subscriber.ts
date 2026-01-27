@@ -612,6 +612,7 @@ export class Subscriber {
           this.debugEmitter.emitMessageSuccess({
             id: messageId,
             command: eventName,
+            queue: this.config.exchange,
             duration: Date.now() - startTime,
           });
         }
@@ -619,12 +620,13 @@ export class Subscriber {
         // All-or-nothing - if any fails, NACK all
         const startTime = Date.now();
         await this.executeHandlersStrict(matchingHandlers, data, context, channel, msg);
-        
+
         // Debug: Emit success event
         if (this.debugEmitter) {
           this.debugEmitter.emitMessageSuccess({
             id: messageId,
             command: eventName,
+            queue: this.config.exchange,
             duration: Date.now() - startTime,
           });
         }
@@ -638,6 +640,7 @@ export class Subscriber {
         this.debugEmitter.emitMessageError({
           id: messageId,
           command: msg.fields.routingKey || 'unknown',
+          queue: this.config.exchange,
           duration: 0,
           error: {
             code: errorObj.name || 'HANDLER_ERROR',

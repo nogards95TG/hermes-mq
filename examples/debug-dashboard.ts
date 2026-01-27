@@ -29,9 +29,8 @@ async function main() {
       host: 'localhost',
     },
     snapshot: {
-      enabled: true,
-      maxMessages: 1000,
-    },
+      enabled: false
+    }
   });
 
   await debugServer.start();
@@ -75,12 +74,10 @@ async function main() {
 
   // Register handlers
   server.registerHandler('TEST', (data) => {
-    console.log(`➕ TEST COMMAND: ${JSON.stringify(data)}`);
     return data;
   });
 
   server.registerHandler('SLOW', (data) => {
-    console.log(`SLOW COMMAND: ${JSON.stringify(data)}`);
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({ result: data.a * data.b });
@@ -89,7 +86,6 @@ async function main() {
   });
 
   server.registerHandler('SLOW_ERROR', (data) => {
-    console.log(`✖️  SLOW ERROR COMMAND: ${JSON.stringify(data)}`);
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({ result: data.a * data.b });
@@ -97,16 +93,14 @@ async function main() {
     });
   });
 
-  // server.registerHandler('ERROR', (data) => {
-  //   console.log(`ERROR COMMAND: ${JSON.stringify(data)}`);
+  server.registerHandler('ERROR', (data) => {
+    // Simulate error condition
+    if (!data) {
+      throw new Error('Data is required');
+    }
 
-  //   // Simulate error condition
-  //   if (!data) {
-  //     throw new Error('Data is required');
-  //   }
-
-  //   return data;
-  // });
+    return data;
+  });
 
   await server.start();
   console.log('✅ RPC Server started\n');
@@ -199,7 +193,7 @@ async function main() {
   // ============================================================================
 
   console.log('✨ Debug Dashboard is running!');
-  console.log('📊 View real-time metrics at http://localhost:3333');
+  console.log('📊 View real-time metrics at http://localhost:9000');
   console.log('\nPress Ctrl+C to stop\n');
 
   // Keep process alive
