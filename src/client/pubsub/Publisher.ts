@@ -8,8 +8,8 @@ import {
   SilentLogger,
   ValidationError,
   HermesError,
-  RetryExhaustedError,
   type RetryConfig,
+  RetryPolicy,
   MetricsCollector,
   RETRY,
   EXCHANGE_TYPE,
@@ -134,6 +134,7 @@ export class Publisher {
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
   private writeBuffer: Array<() => Promise<void>> = [];
   private isWriting = false;
+  private retryPolicy?: RetryPolicy;
 
   /**
    * @remarks
@@ -151,6 +152,10 @@ export class Publisher {
     };
 
     this.connectionManager = config.connection;
+
+    if (this.config.retry?.enabled !== false) {
+      this.retryPolicy = new RetryPolicy(this.config.retry, this.config.logger);
+    }
 
     // Store default exchange type
     if (this.config.exchange) {
@@ -454,41 +459,14 @@ export class Publisher {
   }
 
   /**
-   * Publish with retry logic
+   * Publish with retry logic using RetryPolicy
    */
   private async publishWithRetry(operation: () => Promise<void>): Promise<void> {
-    const maxAttempts = this.config.retry?.maxAttempts ?? 3;
-    const initialDelay = this.config.retry?.initialDelay ?? 1000;
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        await operation();
-        return; // Success
-      } catch (error) {
-        lastError = error as Error;
-        this.config.logger.warn(`Publish attempt ${attempt} failed`, {
-          error: lastError.message,
-          attempt,
-          maxAttempts,
-        });
-
-        if (attempt < maxAttempts) {
-          // Exponential backoff
-          const delay = initialDelay * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
+    if (this.retryPolicy) {
+      return this.retryPolicy.execute(operation, 'publisher.publish');
     }
 
-    // All retries failed
-    throw new RetryExhaustedError(
-      `Failed to publish after ${maxAttempts} attempts: ${lastError?.message}`,
-      {
-        attempts: maxAttempts,
-        lastError: lastError?.message,
-      }
-    );
+    return operation();
   }
 
   /**

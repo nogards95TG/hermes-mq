@@ -3,18 +3,16 @@ import { EventEmitter } from 'events';
 import { Logger, SilentLogger } from '../types/Logger';
 import { ConnectionError } from '../types/Errors';
 import type { DLQOptions } from '../types/Messages';
-import { TIME } from '../constants';
 import { asConnectionWithConfirm } from '../types/Amqp';
 import { CircuitBreaker } from '../resilience/CircuitBreaker';
+import { RetryPolicy, RetryConfig } from '../retry/RetryPolicy';
 
 /**
  * Connection configuration options
  */
 export interface ConnectionConfig {
   url: string;
-  reconnect?: boolean;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
+  retry?: RetryConfig;
   heartbeat?: number;
   logger?: Logger;
   enableCircuitBreaker?: boolean; // default true
@@ -40,10 +38,7 @@ export interface QueueAssertionOptions {
 /**
  * Default connection configuration
  */
-const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
-  reconnect: true,
-  reconnectInterval: TIME.CONNECTION_RECONNECT_BASE_DELAY_MS,
-  maxReconnectAttempts: 10,
+const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger' | 'retry'>> = {
   heartbeat: 60,
   enableCircuitBreaker: true,
   circuitBreakerFailureThreshold: 5,
@@ -76,20 +71,22 @@ const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
 export class ConnectionManager extends EventEmitter {
   private connection: amqp.Connection | null = null;
   private isConnecting = false;
-  private reconnectAttempts = 0;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private config: Required<Omit<ConnectionConfig, 'logger'>>;
+  private config: Required<Omit<ConnectionConfig, 'logger' | 'retry'>>;
   private logger: Logger;
   private isClosed = false;
-  private isClosing = false;
   private connectedAt: Date | null = null;
   private channelCount = 0;
   private circuitBreaker: CircuitBreaker | null = null;
+  private retryPolicy?: RetryPolicy;
 
   constructor(config: ConnectionConfig) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = config.logger || new SilentLogger();
+
+    if (config.retry?.enabled !== false) {
+      this.retryPolicy = new RetryPolicy(config.retry, this.logger);
+    }
 
     // Initialize circuit breaker if enabled
     if (this.config.enableCircuitBreaker) {
@@ -159,6 +156,26 @@ export class ConnectionManager extends EventEmitter {
   private async connect(): Promise<amqp.Connection> {
     this.isConnecting = true;
 
+    if (this.retryPolicy) {
+      try {
+        const connection = await this.retryPolicy.execute(
+          () => this.connectInternal(),
+          'connectionManager.connect'
+        );
+        return connection;
+      } catch (error) {
+        this.isConnecting = false;
+        throw error;
+      }
+    }
+
+    return this.connectInternal();
+  }
+
+  /**
+   * Internal connection logic without retry wrapper
+   */
+  private async connectInternal(): Promise<amqp.Connection> {
     const connectFn = async (): Promise<amqp.Connection> => {
       // Warn if heartbeat is disabled
       if (this.config.heartbeat === 0) {
@@ -187,7 +204,6 @@ export class ConnectionManager extends EventEmitter {
 
       this.connection = connection;
       this.setupConnectionHandlers();
-      this.reconnectAttempts = 0;
       this.isConnecting = false;
       this.connectedAt = new Date();
 
@@ -203,10 +219,6 @@ export class ConnectionManager extends EventEmitter {
 
       this.logger.error('Connection failed', connectionError);
       this.emit('error', connectionError);
-
-      if (this.config.reconnect && this.reconnectAttempts < this.config.maxReconnectAttempts) {
-        this.scheduleReconnect();
-      }
 
       throw connectionError;
     }
@@ -225,7 +237,6 @@ export class ConnectionManager extends EventEmitter {
       if (error.message === 'Unexpected close') {
         this.logger.warn('Connection closed unexpectedly', {
           message: error.message,
-          reconnect: this.config.reconnect,
         });
         return;
       }
@@ -239,55 +250,7 @@ export class ConnectionManager extends EventEmitter {
       this.connection = null;
       this.connectedAt = null;
       this.emit('disconnected');
-
-      if (this.config.reconnect && !this.isClosed && !this.isClosing) {
-        this.scheduleReconnect();
-      }
     });
-  }
-
-  /**
-   * Schedule reconnection attempt with exponential backoff.
-   *
-   * @remarks
-   * Connection errors within this method are intentionally caught and suppressed
-   * because they are already logged and emitted in the connect() method.
-   * The catch handler prevents unhandled promise rejection warnings.
-   */
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer || this.isClosed) return;
-
-    this.reconnectAttempts++;
-
-    if (this.reconnectAttempts > this.config.maxReconnectAttempts) {
-      this.logger.error('Max reconnection attempts reached');
-      this.emit('maxReconnectAttemptsReached');
-      return;
-    }
-
-    // Exponential backoff: delay = baseInterval * 2^(attempt - 1)
-    // Capped at maximum reconnect delay
-    const baseInterval = this.config.reconnectInterval;
-    const exponentialDelay = baseInterval * Math.pow(2, this.reconnectAttempts - 1);
-    const delay = Math.min(exponentialDelay, TIME.CONNECTION_RECONNECT_MAX_DELAY_MS);
-
-    this.logger.info(
-      `Scheduling reconnection attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts}`,
-      { delay, attempt: this.reconnectAttempts }
-    );
-
-    this.emit('reconnecting', { attempt: this.reconnectAttempts, delay });
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect().catch((error) => {
-        // Intentionally suppressed: errors are already logged and emitted in connect()
-        // This catch prevents unhandled promise rejection warnings
-        this.logger.debug('Reconnection attempt failed, will retry if attempts remain', {
-          error: (error as Error).message,
-        });
-      });
-    }, delay);
   }
 
   /**
@@ -365,17 +328,10 @@ export class ConnectionManager extends EventEmitter {
   /**
    * Close connection and cleanup
    *
-   * Closes the connection, cancels reconnection timers, and removes the instance
-   * from the singleton registry. After calling close(), the manager cannot be reused.
+   * After calling close(), the manager cannot be reused.
    */
   async close(): Promise<void> {
-    this.isClosing = true;
     this.isClosed = true;
-
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
 
     if (this.connection) {
       try {

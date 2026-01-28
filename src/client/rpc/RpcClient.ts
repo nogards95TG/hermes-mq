@@ -12,6 +12,8 @@ import {
   Serializer,
   JsonSerializer,
   MetricsCollector,
+  RetryConfig,
+  RetryPolicy,
   TIME,
 } from '../../core';
 import { asConnectionWithConfirm, ExtendedError } from '../../core/types/Amqp';
@@ -29,6 +31,7 @@ export interface RpcClientConfig {
   logger?: Logger;
   assertQueue?: boolean;
   queueOptions?: amqp.Options.AssertQueue;
+  retry?: RetryConfig;
   enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
 }
 
@@ -101,6 +104,7 @@ export class RpcClient {
   private replyQueue: string | null = null;
   private consumerTag: string | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private retryPolicy?: RetryPolicy;
 
   /**
    * @remarks
@@ -117,6 +121,18 @@ export class RpcClient {
     } as any;
 
     this.connectionManager = config.connection;
+
+    // Initialize RetryPolicy if retry is configured
+    // For RPC, retry only on TimeoutError — tutto il resto è un esito definitivo
+    if (config.retry?.enabled !== false) {
+      const retryConfig = {
+        ...config.retry,
+        shouldRetry: config.retry?.shouldRetry ?? ((error: Error) => {
+          return error.name === 'TimeoutError';
+        }),
+      };
+      this.retryPolicy = new RetryPolicy(retryConfig, this.config.logger);
+    }
 
     // Start periodic cleanup of expired callbacks
     this.startCleanupInterval();
@@ -208,6 +224,30 @@ export class RpcClient {
    * ```
    */
   async send<TRequest = any, TResponse = any>(
+    command: string,
+    data: TRequest,
+    options?: {
+      timeout?: number;
+      metadata?: Record<string, any>;
+      signal?: AbortSignal;
+    }
+  ): Promise<TResponse> {
+    // Use RetryPolicy if enabled, otherwise execute directly
+    if (this.retryPolicy) {
+      return this.retryPolicy.execute(
+        () => this.sendInternal<TRequest, TResponse>(command, data, options),
+        `rpc.send:${command}`
+      );
+    }
+
+    // No retry - execute directly
+    return this.sendInternal<TRequest, TResponse>(command, data, options);
+  }
+
+  /**
+   * Internal send method without retry logic
+   */
+  private async sendInternal<TRequest = any, TResponse = any>(
     command: string,
     data: TRequest,
     options?: {

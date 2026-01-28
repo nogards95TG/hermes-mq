@@ -11,25 +11,37 @@ export interface RetryConfig {
   maxDelay?: number;
   backoffMultiplier?: number;
   retryableErrors?: Array<string | RegExp>;
+  /**
+   * Custom function to determine if an error should be retried
+   * @param error - The error that occurred
+   * @param attempt - Current attempt number (1-based)
+   * @returns true to retry, false to stop
+   */
+  shouldRetry?: (error: Error, attempt: number) => boolean;
 }
 
 /**
  * Default retry configuration
  */
-const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
+const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'shouldRetry' | 'retryableErrors'>> & {
+  shouldRetry?: (error: Error, attempt: number) => boolean;
+  retryableErrors?: Array<string | RegExp>;
+} = {
   enabled: true,
   maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
   initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS,
   maxDelay: RETRY.DEFAULT_MAX_DELAY_MS,
   backoffMultiplier: 2,
-  retryableErrors: [/ECONNREFUSED/, /ETIMEDOUT/, /ENOTFOUND/, /EHOSTUNREACH/],
 };
 
 /**
  * RetryPolicy implements exponential backoff retry logic
  */
 export class RetryPolicy {
-  private config: Required<RetryConfig>;
+  private config: Required<Omit<RetryConfig, 'shouldRetry' | 'retryableErrors'>> & {
+    shouldRetry?: (error: Error, attempt: number) => boolean;
+    retryableErrors?: Array<string | RegExp>;
+  };
   private logger: Logger;
 
   constructor(config?: RetryConfig, logger?: Logger) {
@@ -49,6 +61,10 @@ export class RetryPolicy {
       return false;
     }
 
+    if (this.config.shouldRetry) {
+      return this.config.shouldRetry(error, attempt);
+    }
+
     return this.isRetryableError(error);
   }
 
@@ -58,7 +74,9 @@ export class RetryPolicy {
   private isRetryableError(error: Error): boolean {
     const errorMessage = error.message || '';
     const errorName = error.name || '';
-
+    if (!this.config.retryableErrors || this.config.retryableErrors.length === 0) {
+      return true; // Retry all errors by default
+    }
     return this.config.retryableErrors.some((pattern) => {
       if (pattern instanceof RegExp) {
         return pattern.test(errorMessage) || pattern.test(errorName);

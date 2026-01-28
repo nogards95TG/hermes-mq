@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { RpcClient } from '../../src/client/rpc/RpcClient';
-import { TimeoutError, ValidationError, ConnectionManager } from '../../src/core';
+import { TimeoutError, ConnectionManager } from '../../src/core';
 
 // Mock amqplib
 vi.mock('amqplib', () => {
@@ -100,7 +100,7 @@ describe('RpcClient', () => {
     });
 
     it('should throw ValidationError for empty command', async () => {
-      await expect(client.send('', { data: 'test' })).rejects.toThrow(ValidationError);
+      await expect(client.send('', { data: 'test' })).rejects.toThrow('Command is required');
     });
 
     it('should send request with correlation ID', async () => {

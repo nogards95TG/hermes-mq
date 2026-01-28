@@ -165,8 +165,12 @@ import { ConnectionManager, RpcServer, RpcClient, Publisher, Subscriber } from '
 // Create one connection manager
 const connection = new ConnectionManager({
   url: 'amqp://localhost',
-  reconnect: true,
   heartbeat: 60,
+  retry: {
+    enabled: true,
+    maxAttempts: 5,
+    initialDelay: 1000,
+  },
 });
 
 // Share it across all components
@@ -195,6 +199,68 @@ await connection.close(); // Close shared connection last
 - Lower memory footprint
 - Easier connection management and monitoring
 - Consistent reconnection behavior across all components
+
+### Unified Retry Configuration
+
+Hermes MQ provides a unified retry system across all components (ConnectionManager, RpcClient, Publisher) with exponential backoff:
+
+```typescript
+import { ConnectionManager, RpcClient, Publisher } from 'hermes-mq';
+
+// Connection retry with exponential backoff
+const connection = new ConnectionManager({
+  url: 'amqp://localhost',
+  retry: {
+    enabled: true,
+    maxAttempts: 5,
+    initialDelay: 1000, // 1 second
+    maxDelay: 30000, // 30 seconds max
+    backoffMultiplier: 2,
+    retryableErrors: [/ECONNREFUSED/, /ETIMEDOUT/],
+  },
+});
+
+// RPC Client retry
+const client = new RpcClient({
+  connection,
+  queueName: 'users',
+  retry: {
+    enabled: true,
+    maxAttempts: 3,
+    initialDelay: 500,
+  },
+});
+
+// Publisher retry
+const publisher = new Publisher({
+  connection,
+  exchange: 'events',
+  retry: {
+    enabled: true,
+    maxAttempts: 3,
+    initialDelay: 1000,
+  },
+});
+```
+
+**Custom retry logic:**
+
+```typescript
+const client = new RpcClient({
+  connection,
+  queueName: 'users',
+  retry: {
+    enabled: true,
+    maxAttempts: 5,
+    initialDelay: 1000,
+    shouldRetry: (error, attempt) => {
+      // Custom retry logic
+      if (error.message.includes('FATAL')) return false;
+      return attempt < 5;
+    },
+  },
+});
+```
 
 ## 🛡️ Production Reliability Features
 
