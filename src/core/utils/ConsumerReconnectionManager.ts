@@ -5,28 +5,10 @@ import { TIME, LIMITS } from '../constants';
  * Configuration for consumer reconnection behavior
  */
 export interface ConsumerReconnectionConfig {
-  /**
-   * Maximum number of reconnection attempts before giving up
-   * @default LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS (5)
-   */
-  maxReconnectAttempts?: number;
-
-  /**
-   * Base delay in milliseconds for the first reconnection attempt
-   * @default TIME.CONSUMER_RECONNECT_BASE_DELAY_MS (5000)
-   */
-  baseDelay?: number;
-
-  /**
-   * Maximum delay in milliseconds between reconnection attempts
-   * @default TIME.CONSUMER_RECONNECT_MAX_DELAY_MS (60000)
-   */
-  maxDelay?: number;
-
-  /**
-   * Logger instance for logging reconnection events
-   */
-  logger?: Logger;
+  maxReconnectAttempts?: number; // Maximum number of reconnection attempts before giving up, default 5
+  baseDelay?: number; // Base delay in milliseconds for reconnection attempts, default 1000
+  maxDelay?: number; // Maximum delay in milliseconds between reconnection attempts, default 30000
+  logger?: Logger; // Logger instance for logging reconnection events
 }
 
 /**
@@ -75,11 +57,6 @@ export class ConsumerReconnectionManager {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isReconnecting = false;
 
-  /**
-   * Create a new ConsumerReconnectionManager instance
-   *
-   * @param config - Reconnection configuration
-   */
   constructor(config: ConsumerReconnectionConfig = {}) {
     this.config = {
       maxReconnectAttempts: config.maxReconnectAttempts ?? LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS,
@@ -112,8 +89,7 @@ export class ConsumerReconnectionManager {
     }
 
     // Calculate delay with exponential backoff
-    const exponentialDelay =
-      this.config.baseDelay * Math.pow(2, this.reconnectAttempts - 1);
+    const exponentialDelay = this.config.baseDelay * Math.pow(2, this.reconnectAttempts - 1);
     const delay = Math.min(exponentialDelay, this.config.maxDelay);
 
     this.config.logger.info(

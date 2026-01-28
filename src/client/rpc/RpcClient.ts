@@ -20,9 +20,6 @@ import { asConnectionWithConfirm, ExtendedError } from '../../core/types/Amqp';
  * RPC Client configuration
  */
 export interface RpcClientConfig {
-  /**
-   * Connection manager instance
-   */
   connection: ConnectionManager;
   queueName: string;
   timeout?: number;
@@ -32,12 +29,7 @@ export interface RpcClientConfig {
   logger?: Logger;
   assertQueue?: boolean;
   queueOptions?: amqp.Options.AssertQueue;
-  /**
-   * Enable metrics collection using the global MetricsCollector instance.
-   * When enabled, metrics are automatically collected and aggregated with all other components.
-   * Default: false
-   */
-  enableMetrics?: boolean;
+  enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
 }
 
 /**
@@ -99,9 +91,9 @@ type RequiredRpcClientConfig = Required<
  * ```
  */
 export class RpcClient {
-  private config: RequiredRpcClientConfig;
   private connectionManager: ConnectionManager;
   private channel: amqp.ConfirmChannel | null = null;
+  private config: RequiredRpcClientConfig;
   private logger: Logger;
   private serializer: Serializer;
   private pendingRequests = new Map<string, PendingRequest<any>>();
@@ -111,9 +103,6 @@ export class RpcClient {
   private cleanupInterval: NodeJS.Timeout | null = null;
 
   /**
-   * Create a new RPC client instance
-   *
-   * @param config - Client configuration including connection manager and queue name
    * @remarks
    * You can share the same ConnectionManager instance across multiple components
    * to reuse the same underlying RabbitMQ connection.
@@ -122,11 +111,9 @@ export class RpcClient {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
-      // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     };
 
-    // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
 
     this.logger = config.logger || new SilentLogger();
@@ -346,7 +333,6 @@ export class RpcClient {
       return;
     }
 
-    // Calculate duration
     const duration = (Date.now() - pending.timestamp) / 1000; // Convert to seconds
 
     // Clear timeout and remove from pending
@@ -476,7 +462,6 @@ export class RpcClient {
    * After calling close(), the client cannot be reused.
    */
   async close(): Promise<void> {
-    // Stop cleanup interval
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;

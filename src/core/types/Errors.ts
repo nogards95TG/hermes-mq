@@ -15,7 +15,6 @@ export class HermesError extends Error {
 
 /**
  * Connection-related errors.
- * Use static factory methods for type-safe error creation:
  * - ConnectionError.failed() - Initial connection failure
  * - ConnectionError.closed() - Unexpected connection closure
  * - ConnectionError.auth() - Authentication failure
@@ -59,7 +58,6 @@ export class TimeoutError extends HermesError {
 
 /**
  * Channel-related errors.
- * Use static factory methods for type-safe error creation:
  * - ChannelError.creationFailed() - Failed to create channel
  * - ChannelError.poolDraining() - Pool is draining
  * - ChannelError.closed() - Channel closed unexpectedly
@@ -94,7 +92,6 @@ export class ChannelError extends HermesError {
 
 /**
  * Validation errors.
- * Use static factory methods for type-safe error creation:
  * - ValidationError.commandRequired() - Command is required
  * - ValidationError.handlerRequired() - Handler is required/missing
  * - ValidationError.exchangeRequired() - Exchange is required
@@ -168,5 +165,18 @@ export class StateError extends HermesError {
 export class RetryExhaustedError extends HermesError {
   constructor(message: string, details?: any) {
     super(message, 'RETRY_EXHAUSTED_ERROR', details);
+  }
+}
+
+/**
+ * Publish-related errors
+ * - PublishError.publishFailed() - Failed to publish message
+ */
+export class PublishError extends HermesError {
+  private constructor(message: string, code: string, details?: any) {
+    super(message, code, details);
+  }
+  static publishFailed(message: string, details?: any): PublishError {
+    return new PublishError(message, 'PUBLISH_ERROR:PUBLISH_FAILED', details);
   }
 }

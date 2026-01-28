@@ -89,13 +89,7 @@ export class HealthChecker {
   private servers: (RpcServer | Subscriber)[];
   private startTime: Date;
 
-  /**
-   * Create a new HealthChecker instance
-   *
-   * @param config - Health checker configuration
-   */
   constructor(config: HealthCheckerConfig) {
-    // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
     this.servers = config.servers || [];
     this.startTime = new Date();
@@ -103,8 +97,6 @@ export class HealthChecker {
 
   /**
    * Register a server or subscriber for health monitoring
-   *
-   * @param server - RpcServer or Subscriber instance to monitor
    */
   registerServer(server: RpcServer | Subscriber): void {
     if (!this.servers.includes(server)) {
@@ -114,8 +106,6 @@ export class HealthChecker {
 
   /**
    * Unregister a server or subscriber from health monitoring
-   *
-   * @param server - RpcServer or Subscriber instance to remove
    */
   unregisterServer(server: RpcServer | Subscriber): void {
     const index = this.servers.indexOf(server);

@@ -22,6 +22,14 @@ export type { DeduplicationResult } from './message/MessageDeduplicator';
 export { RetryPolicy } from './retry/RetryPolicy';
 export type { RetryConfig } from './retry/RetryPolicy';
 
+// Resilience
+export { CircuitBreaker } from './resilience/CircuitBreaker';
+export type {
+  CircuitBreakerConfig,
+  CircuitBreakerState,
+  CircuitBreakerStats,
+} from './resilience/CircuitBreaker';
+
 // Types
 export type {
   MessageEnvelope,

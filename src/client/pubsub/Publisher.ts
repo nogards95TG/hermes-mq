@@ -16,15 +16,13 @@ import {
   CONFIRM_MODE,
 } from '../../core';
 import { asConnectionWithConfirm, asExtendedConfirmChannel } from '../../core/types/Amqp';
+import { PublishError } from '../../core/types/Errors';
 
 /**
  * Publisher configuration
  */
 export interface PublisherConfig {
-  /**
-   * Connection manager instance
-   */
-  connection: ConnectionManager;
+  connection: ConnectionManager; // Connection manager instance
   exchanges?: Array<{
     name: string;
     type?: 'topic' | 'fanout' | 'direct';
@@ -46,12 +44,7 @@ export interface PublisherConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
-  /**
-   * Enable metrics collection using the global MetricsCollector instance.
-   * When enabled, metrics are automatically collected and aggregated with all other components.
-   * Default: false
-   */
-  enableMetrics?: boolean;
+  enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
 }
 
 /**
@@ -65,6 +58,9 @@ export interface ReturnedMessage {
   message: Buffer;
 }
 
+/**
+ * Options for publishing messages
+ */
 interface PublishOptions {
   exchange?: string;
   routingKey?: string;
@@ -86,7 +82,7 @@ const DEFAULT_CONFIG = {
   retry: {
     enabled: true,
     maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
-    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS
+    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS,
   },
 };
 
@@ -115,10 +111,12 @@ type RequiredPublisherConfig = Required<
  *
  * @example
  * ```typescript
- * import { Publisher } from 'hermes-mq';
+ * import { Publisher, ConnectionManager } from 'hermes-mq';
+ *
+ * const connection = new ConnectionManager({ url: 'amqp://localhost' });
  *
  * const publisher = new Publisher({
- *   connection: { url: 'amqp://localhost' },
+ *   connection,
  *   exchange: 'events'
  * });
  *
@@ -138,22 +136,6 @@ export class Publisher {
   private isWriting = false;
 
   /**
-   * Create a new Publisher instance
-   *
-   * @param config - Publisher configuration including connection manager and exchange details
-   *
-   * @example
-   * ```typescript
-   * import { ConnectionManager, Publisher } from 'hermes-mq';
-   *
-   * const connection = new ConnectionManager({ url: 'amqp://localhost' });
-   *
-   * const publisher = new Publisher({
-   *   connection,
-   *   exchange: 'events'
-   * });
-   * ```
-   *
    * @remarks
    * You can share the same ConnectionManager instance across multiple components
    * to reuse the same underlying RabbitMQ connection.
@@ -165,11 +147,9 @@ export class Publisher {
       defaultExchange: config.defaultExchange ?? config.exchange ?? 'amq.topic',
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
-      // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     };
 
-    // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
 
     // Store default exchange type
@@ -299,7 +279,7 @@ export class Publisher {
         }
 
         const message = error instanceof Error ? error.message : 'Unknown error';
-        throw new HermesError(`Failed to publish event: ${message}`, 'PUBLISH_ERROR');
+        throw PublishError.publishFailed(message);
       }
     };
 
@@ -352,9 +332,6 @@ export class Publisher {
 
   /**
    * Close publisher and cleanup resources.
-   *
-   * Closes the channel and connection. After calling close(),
-   * the publisher cannot be reused.
    *
    * @remarks
    * Channel close errors are intentionally caught and logged at WARN level

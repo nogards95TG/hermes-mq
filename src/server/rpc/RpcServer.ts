@@ -22,15 +22,16 @@ import {
 } from '../../core';
 import { MessageParser } from '../../core/message/MessageParser';
 import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
-import { asConnectionWithConfirm, asChannelWithConnection, ExtendedError } from '../../core/types/Amqp';
+import {
+  asConnectionWithConfirm,
+  asChannelWithConnection,
+  ExtendedError,
+} from '../../core/types/Amqp';
 
 /**
  * RPC Server configuration
  */
 export interface RpcServerConfig {
-  /**
-   * Connection manager instance
-   */
   connection: ConnectionManager;
   queueName: string;
   prefetch?: number;
@@ -42,12 +43,7 @@ export interface RpcServerConfig {
   messageValidation?: MessageValidationOptions;
   deduplication?: DeduplicationOptions;
   slowMessageDetection?: SlowMessageDetectionOptions;
-  /**
-   * Enable metrics collection using the global MetricsCollector instance.
-   * When enabled, metrics are automatically collected and aggregated with all other components.
-   * Default: false
-   */
-  enableMetrics?: boolean;
+  enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
 }
 
 /**
@@ -137,23 +133,13 @@ export class RpcServer {
   private deduplicator: MessageDeduplicator;
   private reconnectionManager: ConsumerReconnectionManager;
 
-  /**
-   * Create a new RPC server instance
-   *
-   * @param config - Server configuration including connection manager and queue details
-   * @remarks
-   * You can share the same ConnectionManager instance across multiple components
-   * to reuse the same underlying RabbitMQ connection.
-   */
   constructor(config: RpcServerConfig) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
-      // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     } as any;
 
-    // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
 
     this.logger = config.logger || new SilentLogger();
@@ -242,7 +228,10 @@ export class RpcServer {
       this.channel.on('error', (error: Error) => {
         // Channel error detected - log and mark server as not running
         // The channel will need to be recreated by calling start() again
-        this.logger.error('RpcServer channel error - server stopped, call start() to recover', error);
+        this.logger.error(
+          'RpcServer channel error - server stopped, call start() to recover',
+          error
+        );
         this.isRunning = false;
         this.channel = null;
       });

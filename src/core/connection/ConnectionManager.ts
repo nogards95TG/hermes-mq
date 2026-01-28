@@ -5,6 +5,7 @@ import { ConnectionError } from '../types/Errors';
 import type { DLQOptions } from '../types/Messages';
 import { TIME } from '../constants';
 import { asConnectionWithConfirm } from '../types/Amqp';
+import { CircuitBreaker } from '../resilience/CircuitBreaker';
 
 /**
  * Connection configuration options
@@ -16,6 +17,10 @@ export interface ConnectionConfig {
   maxReconnectAttempts?: number;
   heartbeat?: number;
   logger?: Logger;
+  enableCircuitBreaker?: boolean; // default true
+  circuitBreakerFailureThreshold?: number; // Number of consecutive failures before opening the circuit, default 5
+  circuitBreakerResetTimeout?: number; // Time in milliseconds to wait before attempting to close the circuit, default 60000 (60 seconds)
+  circuitBreakerHalfOpenMaxAttempts?: number; // Maximum number of connection attempts in half-open state, default 3
 }
 
 /**
@@ -40,6 +45,10 @@ const DEFAULT_CONFIG: Required<Omit<ConnectionConfig, 'url' | 'logger'>> = {
   reconnectInterval: TIME.CONNECTION_RECONNECT_BASE_DELAY_MS,
   maxReconnectAttempts: 10,
   heartbeat: 60,
+  enableCircuitBreaker: true,
+  circuitBreakerFailureThreshold: 5,
+  circuitBreakerResetTimeout: 60_000,
+  circuitBreakerHalfOpenMaxAttempts: 3,
 };
 
 /**
@@ -75,11 +84,31 @@ export class ConnectionManager extends EventEmitter {
   private isClosing = false;
   private connectedAt: Date | null = null;
   private channelCount = 0;
+  private circuitBreaker: CircuitBreaker | null = null;
 
   constructor(config: ConnectionConfig) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = config.logger || new SilentLogger();
+
+    // Initialize circuit breaker if enabled
+    if (this.config.enableCircuitBreaker) {
+      this.circuitBreaker = new CircuitBreaker({
+        failureThreshold: this.config.circuitBreakerFailureThreshold,
+        resetTimeout: this.config.circuitBreakerResetTimeout,
+        halfOpenMaxAttempts: this.config.circuitBreakerHalfOpenMaxAttempts,
+        logger: this.logger,
+      });
+
+      // Forward circuit breaker events
+      this.circuitBreaker.on('stateChange', (event) => {
+        this.emit('circuitBreakerStateChange', event);
+      });
+
+      this.circuitBreaker.on('reset', () => {
+        this.emit('circuitBreakerReset');
+      });
+    }
   }
 
   /**
@@ -130,7 +159,7 @@ export class ConnectionManager extends EventEmitter {
   private async connect(): Promise<amqp.Connection> {
     this.isConnecting = true;
 
-    try {
+    const connectFn = async (): Promise<amqp.Connection> => {
       // Warn if heartbeat is disabled
       if (this.config.heartbeat === 0) {
         this.logger.warn(
@@ -143,10 +172,20 @@ export class ConnectionManager extends EventEmitter {
         heartbeat: this.config.heartbeat,
       });
 
-      this.connection = (await amqp.connect(this.config.url, {
+      const connection = (await amqp.connect(this.config.url, {
         heartbeat: this.config.heartbeat,
       })) as unknown as amqp.Connection;
 
+      return connection;
+    };
+
+    try {
+      // Use circuit breaker if enabled, otherwise connect directly
+      const connection = this.circuitBreaker
+        ? await this.circuitBreaker.execute(connectFn)
+        : await connectFn();
+
+      this.connection = connection;
       this.setupConnectionHandlers();
       this.reconnectAttempts = 0;
       this.isConnecting = false;
@@ -269,12 +308,33 @@ export class ConnectionManager extends EventEmitter {
     connected: boolean;
     connectedAt: Date | null;
     url: string;
+    circuitBreakerState?: string;
   } {
     return {
       connected: this.isConnected(),
       connectedAt: this.connectedAt,
       url: this.maskUrl(this.config.url),
+      circuitBreakerState: this.circuitBreaker?.getState(),
     };
+  }
+
+  /**
+   * Get circuit breaker statistics
+   *
+   * @returns Circuit breaker statistics or null if disabled
+   */
+  getCircuitBreakerStats() {
+    return this.circuitBreaker?.getStats() || null;
+  }
+
+  /**
+   * Force reset the circuit breaker to CLOSED state
+   *
+   * Use this method to manually reset the circuit breaker,
+   * for example after fixing the underlying issue.
+   */
+  resetCircuitBreaker(): void {
+    this.circuitBreaker?.forceReset();
   }
 
   /**

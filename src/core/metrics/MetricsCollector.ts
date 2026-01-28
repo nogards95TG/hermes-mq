@@ -328,9 +328,7 @@ export class MetricsCollector {
           // Buckets
           for (const bucket of metric.buckets) {
             const le = bucket.le === Infinity ? '+Inf' : bucket.le.toString();
-            const labels = baseLabels
-              ? `${baseLabels.slice(0, -1)},le="${le}"}`
-              : `{le="${le}"}`;
+            const labels = baseLabels ? `${baseLabels.slice(0, -1)},le="${le}"}` : `{le="${le}"}`;
             output += `${name}_bucket${labels} ${bucket.count}\n`;
           }
 

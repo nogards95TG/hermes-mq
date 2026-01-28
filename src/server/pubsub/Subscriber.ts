@@ -44,9 +44,6 @@ export interface ErrorContext {
  * Subscriber configuration
  */
 export interface SubscriberConfig {
-  /**
-   * Connection manager instance
-   */
   connection: ConnectionManager;
   exchange: string;
   exchangeType?: 'topic' | 'fanout' | 'direct';
@@ -72,12 +69,7 @@ export interface SubscriberConfig {
   messageValidation?: MessageValidationOptions;
   errorHandling?: ErrorHandlingOptions;
   slowMessageDetection?: SlowMessageDetectionOptions;
-  /**
-   * Enable metrics collection using the global MetricsCollector instance.
-   * When enabled, metrics are automatically collected and aggregated with all other components.
-   * Default: false
-   */
-  enableMetrics?: boolean;
+  enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
 }
 
 /**
@@ -128,7 +120,7 @@ const DEFAULT_CONFIG = {
   retry: {
     enabled: true,
     maxAttempts: RETRY.DEFAULT_MAX_ATTEMPTS,
-    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS
+    initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS,
   },
   ackStrategy: { mode: ACK_MODE.AUTO, requeue: true },
   messageValidation: {
@@ -188,15 +180,6 @@ export class Subscriber {
   private reconnectionManager: ConsumerReconnectionManager;
   private inFlightMessages = new Set<string>();
 
-  /**
-   * Create a new Subscriber instance
-   *
-   * @param config - Subscriber configuration including connection manager and exchange details
-   * @throws {ValidationError} When exchange is missing
-   * @remarks
-   * You can share the same ConnectionManager instance across multiple components
-   * to reuse the same underlying RabbitMQ connection.
-   */
   constructor(config: SubscriberConfig) {
     if (!config.exchange) {
       throw ValidationError.exchangeRequired('Exchange is required');
@@ -208,7 +191,6 @@ export class Subscriber {
       exchange: config.exchange,
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
-      // Use global metrics if enabled
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     } as any;
 
@@ -217,7 +199,6 @@ export class Subscriber {
       logger: this.config.logger,
     });
 
-    // Use the provided ConnectionManager instance
     this.connectionManager = config.connection;
   }
 
@@ -568,9 +549,6 @@ export class Subscriber {
     }
   }
 
-  /**
-   * Execute handlers with error isolation (continue on error)
-   */
   /**
    * Execute handlers in isolated mode where each handler failure is independent.
    *
