@@ -326,7 +326,8 @@ export class Publisher {
 
   // Placeholder for future broadcast implementation
   // Should publish to all known subscribers/exchanges
-  async broadcast(): Promise<void> {
+  // @ts-expect-error - Placeholder for future implementation
+  private async broadcast(): Promise<void> {
     this.config.logger.warn('Broadcast method not implemented yet');
   }
 

@@ -61,8 +61,10 @@ const DEFAULT_CONFIG = {
  * Required RPC client configuration with defaults applied
  */
 type RequiredRpcClientConfig = Required<
-  Omit<RpcClientConfig, 'connection' | 'logger' | 'serializer'>
+  Omit<RpcClientConfig, 'connection'>
 > & {
+  logger: Logger;
+  serializer: Serializer;
   metrics?: MetricsCollector;
 };
 
@@ -94,8 +96,6 @@ export class RpcClient {
   private connectionManager: ConnectionManager;
   private channel: amqp.ConfirmChannel | null = null;
   private config: RequiredRpcClientConfig;
-  private logger: Logger;
-  private serializer: Serializer;
   private pendingRequests = new Map<string, PendingRequest<any>>();
   private isReady = false;
   private replyQueue: string | null = null;
@@ -111,13 +111,12 @@ export class RpcClient {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
+      logger: config.logger ?? new SilentLogger(),
+      serializer: config.serializer ?? new JsonSerializer(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
-    };
+    } as any;
 
     this.connectionManager = config.connection;
-
-    this.logger = config.logger || new SilentLogger();
-    this.serializer = config.serializer || new JsonSerializer();
 
     // Start periodic cleanup of expired callbacks
     this.startCleanupInterval();
@@ -135,19 +134,19 @@ export class RpcClient {
 
       // Setup channel error handlers
       this.channel.on('error', (error: Error) => {
-        this.logger.error('Channel error', error);
+        this.config.logger.error('Channel error', error);
         this.isReady = false;
       });
 
       this.channel.on('close', () => {
-        this.logger.warn('Channel closed');
+        this.config.logger.warn('Channel closed');
         this.isReady = false;
       });
 
       // Assert the request queue
       if (this.config.assertQueue) {
         await this.channel.assertQueue(this.config.queueName, this.config.queueOptions);
-        this.logger.debug(`Queue "${this.config.queueName}" asserted`);
+        this.config.logger.debug(`Queue "${this.config.queueName}" asserted`);
       }
 
       // Setup reply-to queue (using direct reply-to)
@@ -163,12 +162,12 @@ export class RpcClient {
       this.consumerTag = consumer.consumerTag;
       this.isReady = true;
 
-      this.logger.info('RpcClient initialized', {
+      this.config.logger.info('RpcClient initialized', {
         queueName: this.config.queueName,
         replyQueue: this.replyQueue,
       });
     } catch (error) {
-      this.logger.error('Failed to initialize RpcClient', error as Error);
+      this.config.logger.error('Failed to initialize RpcClient', error as Error);
       throw error;
     }
   }
@@ -291,7 +290,7 @@ export class RpcClient {
 
       try {
         // Send request
-        const content = this.serializer.encode(request);
+        const content = this.config.serializer.encode(request);
 
         this.channel!.sendToQueue(this.config.queueName, content, {
           correlationId,
@@ -302,7 +301,7 @@ export class RpcClient {
           timestamp: request.timestamp,
         });
 
-        this.logger.debug('RPC request sent', {
+        this.config.logger.debug('RPC request sent', {
           command,
           correlationId,
           queueName: this.config.queueName,
@@ -323,13 +322,13 @@ export class RpcClient {
 
     const correlationId = msg.properties.correlationId;
     if (!correlationId) {
-      this.logger.warn('Received reply without correlationId');
+      this.config.logger.warn('Received reply without correlationId');
       return;
     }
 
     const pending = this.pendingRequests.get(correlationId);
     if (!pending) {
-      this.logger.warn('Received reply for unknown correlationId', { correlationId });
+      this.config.logger.warn('Received reply for unknown correlationId', { correlationId });
       return;
     }
 
@@ -340,7 +339,7 @@ export class RpcClient {
     this.pendingRequests.delete(correlationId);
 
     try {
-      const response: ResponseEnvelope = this.serializer.decode(msg.content);
+      const response: ResponseEnvelope = this.config.serializer.decode(msg.content);
 
       if (response.success) {
         // Track successful RPC request
@@ -449,7 +448,7 @@ export class RpcClient {
     }
 
     if (cleanedCount > 0) {
-      this.logger.debug(`Cleaned up ${cleanedCount} expired pending requests`, {
+      this.config.logger.debug(`Cleaned up ${cleanedCount} expired pending requests`, {
         remaining: this.pendingRequests.size,
       });
     }
@@ -471,7 +470,7 @@ export class RpcClient {
       try {
         await this.channel.cancel(this.consumerTag);
       } catch (error) {
-        this.logger.warn('Error cancelling consumer', { error: (error as Error).message });
+        this.config.logger.warn('Error cancelling consumer', { error: (error as Error).message });
       }
     }
 
@@ -486,12 +485,12 @@ export class RpcClient {
       try {
         await this.channel.close();
       } catch (error) {
-        this.logger.warn('Error closing channel', { error: (error as Error).message });
+        this.config.logger.warn('Error closing channel', { error: (error as Error).message });
       }
       this.channel = null;
     }
 
     this.isReady = false;
-    this.logger.info('RpcClient closed');
+    this.config.logger.info('RpcClient closed');
   }
 }

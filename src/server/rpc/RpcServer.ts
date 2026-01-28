@@ -58,8 +58,10 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
  * Required RPC server configuration with defaults applied
  */
 type RequiredRpcServerConfig = Required<
-  Omit<RpcServerConfig, 'connection' | 'logger' | 'serializer'>
+  Omit<RpcServerConfig, 'connection'>
 > & {
+  logger: Logger;
+  serializer: Serializer;
   metrics?: MetricsCollector;
 };
 
@@ -123,8 +125,6 @@ export class RpcServer {
   private config: RequiredRpcServerConfig;
   private connectionManager: ConnectionManager;
   private channel: amqp.ConfirmChannel | null = null;
-  private logger: Logger;
-  private serializer: Serializer;
   private handlers = new Map<string, RpcHandler>();
   private isRunning = false;
   private consumerTag: string | null = null;
@@ -137,17 +137,17 @@ export class RpcServer {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
+      logger: config.logger ?? new SilentLogger(),
+      serializer: config.serializer ?? new JsonSerializer(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
     } as any;
 
     this.connectionManager = config.connection;
 
-    this.logger = config.logger || new SilentLogger();
-    this.serializer = config.serializer || new JsonSerializer();
     this.messageParser = new MessageParser(this.config.messageValidation);
     this.deduplicator = new MessageDeduplicator(this.config.deduplication);
     this.reconnectionManager = new ConsumerReconnectionManager({
-      logger: this.logger,
+      logger: this.config.logger,
     });
   }
 
@@ -185,11 +185,11 @@ export class RpcServer {
     const normalizedCommand = command.toUpperCase();
 
     if (this.handlers.has(normalizedCommand)) {
-      this.logger.warn(`Overwriting existing handler for command: ${normalizedCommand}`);
+      this.config.logger.warn(`Overwriting existing handler for command: ${normalizedCommand}`);
     }
 
     this.handlers.set(normalizedCommand, handler);
-    this.logger.debug(`Handler registered for command: ${normalizedCommand}`);
+    this.config.logger.debug(`Handler registered for command: ${normalizedCommand}`);
   }
 
   /**
@@ -200,9 +200,9 @@ export class RpcServer {
     const deleted = this.handlers.delete(normalizedCommand);
 
     if (deleted) {
-      this.logger.debug(`Handler unregistered for command: ${normalizedCommand}`);
+      this.config.logger.debug(`Handler unregistered for command: ${normalizedCommand}`);
     } else {
-      this.logger.warn(`No handler found for command: ${normalizedCommand}`);
+      this.config.logger.warn(`No handler found for command: ${normalizedCommand}`);
     }
   }
 
@@ -216,7 +216,7 @@ export class RpcServer {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      this.logger.warn('RpcServer is already running');
+      this.config.logger.warn('RpcServer is already running');
       return;
     }
 
@@ -228,7 +228,7 @@ export class RpcServer {
       this.channel.on('error', (error: Error) => {
         // Channel error detected - log and mark server as not running
         // The channel will need to be recreated by calling start() again
-        this.logger.error(
+        this.config.logger.error(
           'RpcServer channel error - server stopped, call start() to recover',
           error
         );
@@ -237,19 +237,19 @@ export class RpcServer {
       });
 
       this.channel.on('close', () => {
-        this.logger.warn('Channel closed');
+        this.config.logger.warn('Channel closed');
         this.isRunning = false;
       });
 
       // Handle consumer cancellation (server-side cancel)
       this.channel.on('cancel', () => {
-        this.logger.warn('Consumer was cancelled by server, attempting to re-register...');
+        this.config.logger.warn('Consumer was cancelled by server, attempting to re-register...');
         this.isRunning = false;
 
         // Attempt to re-register the consumer after a delay
         setTimeout(() => {
           this.reRegisterConsumer().catch((error) => {
-            this.logger.error('Failed to re-register consumer after cancellation', error as Error);
+            this.config.logger.error('Failed to re-register consumer after cancellation', error as Error);
           });
         }, 5000);
       });
@@ -257,7 +257,7 @@ export class RpcServer {
       // Assert the request queue
       if (this.config.assertQueue) {
         await this.channel.assertQueue(this.config.queueName, this.config.queueOptions);
-        this.logger.debug(`Queue "${this.config.queueName}" asserted`);
+        this.config.logger.debug(`Queue "${this.config.queueName}" asserted`);
       }
 
       // Set prefetch
@@ -276,13 +276,13 @@ export class RpcServer {
       // Reset reconnection manager on successful start
       this.reconnectionManager.reset();
 
-      this.logger.info('RpcServer started', {
+      this.config.logger.info('RpcServer started', {
         queueName: this.config.queueName,
         prefetch: this.config.prefetch,
         handlers: this.handlers.size,
       });
     } catch (error) {
-      this.logger.error('Failed to start RpcServer', error as Error);
+      this.config.logger.error('Failed to start RpcServer', error as Error);
       throw error;
     }
   }
@@ -296,7 +296,7 @@ export class RpcServer {
     }
 
     try {
-      this.logger.info('Re-registering consumer...');
+      this.config.logger.info('Re-registering consumer...');
 
       // Get or recreate channel
       if (!this.channel || !asChannelWithConnection(this.channel).connection) {
@@ -320,9 +320,9 @@ export class RpcServer {
       // Reset reconnection manager on successful re-registration
       this.reconnectionManager.reset();
 
-      this.logger.info('Consumer re-registered successfully');
+      this.config.logger.info('Consumer re-registered successfully');
     } catch (error) {
-      this.logger.error('Failed to re-register consumer', error as Error);
+      this.config.logger.error('Failed to re-register consumer', error as Error);
       throw error;
     }
   }
@@ -356,7 +356,7 @@ export class RpcServer {
       await this.sendSuccessResponse(request, result, correlationId, replyTo);
       this.acknowledgeMessage(msg);
     } catch (error) {
-      this.logger.error('Error handling request', error as Error);
+      this.config.logger.error('Error handling request', error as Error);
       this.collectMetrics('unknown', 0, 'error');
       await this.handleRequestError(msg, error, correlationId, replyTo);
     } finally {
@@ -368,7 +368,7 @@ export class RpcServer {
    * Handle consumer cancellation by server
    */
   private async handleConsumerCancellation(): Promise<void> {
-    this.logger.warn('Consumer cancelled by server, attempting to re-register');
+    this.config.logger.warn('Consumer cancelled by server, attempting to re-register');
     this.isRunning = false;
     await this.scheduleConsumerReconnect();
   }
@@ -402,7 +402,7 @@ export class RpcServer {
     const parseResult = await this.messageParser.parse(msg);
 
     if (!parseResult.success) {
-      this.logger.error('Received malformed message', parseResult.error, {
+      this.config.logger.error('Received malformed message', parseResult.error, {
         correlationId,
         strategy: parseResult.strategy,
       });
@@ -418,7 +418,7 @@ export class RpcServer {
       throw ValidationError.commandRequired('Command is required in request');
     }
 
-    this.logger.debug('Received RPC request', {
+    this.config.logger.debug('Received RPC request', {
       command: request.command,
       correlationId,
     });
@@ -478,7 +478,7 @@ export class RpcServer {
     });
 
     if (deduplicationResult.duplicate) {
-      this.logger.debug('Skipped duplicate request', {
+      this.config.logger.debug('Skipped duplicate request', {
         command: request.command,
         correlationId,
       });
@@ -547,14 +547,14 @@ export class RpcServer {
       data: result,
     };
 
-    const content = this.serializer.encode(response);
+    const content = this.config.serializer.encode(response);
 
     this.channel.sendToQueue(replyTo, content, {
       correlationId,
       contentType: 'application/json',
     });
 
-    this.logger.debug('Sent success response', {
+    this.config.logger.debug('Sent success response', {
       command: request.command,
       correlationId,
     });
@@ -614,19 +614,19 @@ export class RpcServer {
           },
         };
 
-        const content = this.serializer.encode(response);
+        const content = this.config.serializer.encode(response);
 
         this.channel.sendToQueue(replyTo, content, {
           correlationId,
           contentType: 'application/json',
         });
 
-        this.logger.debug('Sent error response', {
+        this.config.logger.debug('Sent error response', {
           correlationId,
           error: (error as Error).message,
         });
       } catch (replyError) {
-        this.logger.error('Failed to send error response', replyError as Error);
+        this.config.logger.error('Failed to send error response', replyError as Error);
       }
     }
 
@@ -646,7 +646,7 @@ export class RpcServer {
           // Schedule retry with delay
           // Note: This would require the RabbitMQ delayed message plugin
           // or implementation of a delay queue
-          this.logger.debug('Scheduling retry with delay', {
+          this.config.logger.debug('Scheduling retry with delay', {
             correlationId,
             delay,
             attempt: attempts + 1,
@@ -672,7 +672,7 @@ export class RpcServer {
         }
       } else {
         // Max retries exceeded or should not requeue - send to DLQ
-        this.logger.warn('Message sent to DLQ', {
+        this.config.logger.warn('Message sent to DLQ', {
           correlationId,
           attempts,
           maxRetries,
@@ -779,9 +779,9 @@ export class RpcServer {
       };
 
       if (level === 'error') {
-        this.logger.error(logMessage, undefined, logContext);
+        this.config.logger.error(logMessage, undefined, logContext);
       } else {
-        this.logger.warn(logMessage, logContext);
+        this.config.logger.warn(logMessage, logContext);
       }
     }
   }
@@ -796,7 +796,7 @@ export class RpcServer {
     const timeout = options?.timeout || TIME.DEFAULT_SHUTDOWN_TIMEOUT_MS;
 
     if (!this.isRunning) {
-      this.logger.warn('RpcServer is not running');
+      this.config.logger.warn('RpcServer is not running');
       return;
     }
 
@@ -808,9 +808,9 @@ export class RpcServer {
       if (this.consumerTag && this.channel) {
         try {
           await this.channel.cancel(this.consumerTag);
-          this.logger.debug('Consumer cancelled');
+          this.config.logger.debug('Consumer cancelled');
         } catch (error) {
-          this.logger.warn('Error cancelling consumer', { error: (error as Error).message });
+          this.config.logger.warn('Error cancelling consumer', { error: (error as Error).message });
         }
       }
 
@@ -819,14 +819,14 @@ export class RpcServer {
         const startTime = Date.now();
 
         while (this.inFlightMessages.size > 0 && Date.now() - startTime < timeout) {
-          this.logger.debug('Waiting for in-flight messages', {
+          this.config.logger.debug('Waiting for in-flight messages', {
             count: this.inFlightMessages.size,
           });
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
         if (this.inFlightMessages.size > 0) {
-          this.logger.warn('Stopping with in-flight messages', {
+          this.config.logger.warn('Stopping with in-flight messages', {
             count: this.inFlightMessages.size,
           });
         }
@@ -840,15 +840,15 @@ export class RpcServer {
         try {
           await this.channel.close();
         } catch (error) {
-          this.logger.warn('Error closing channel', { error: (error as Error).message });
+          this.config.logger.warn('Error closing channel', { error: (error as Error).message });
         }
         this.channel = null;
       }
 
       this.isRunning = false;
-      this.logger.info('RpcServer stopped');
+      this.config.logger.info('RpcServer stopped');
     } catch (error) {
-      this.logger.error('Error during shutdown', error as Error);
+      this.config.logger.error('Error during shutdown', error as Error);
       if (!options?.force) {
         throw error;
       }
