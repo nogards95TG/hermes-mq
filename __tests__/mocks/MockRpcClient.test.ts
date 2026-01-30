@@ -67,7 +67,9 @@ describe('MockRpcClient', () => {
       const validationError = ValidationError.invalidConfig('Invalid input');
       mockClient.mockError('CREATE_USER', validationError);
 
-      await expect(mockClient.send('CREATE_USER', { name: '' })).rejects.toThrow(ValidationError);
+      await expect(mockClient.send('CREATE_USER', { name: '' })).rejects.toThrow(
+        'Invalid input'
+      );
     });
 
     it('should normalize command name to uppercase for errors', async () => {
@@ -82,7 +84,7 @@ describe('MockRpcClient', () => {
     it('should validate command is not empty', async () => {
       mockClient.mockResponse('TEST', { ok: true });
 
-      await expect(mockClient.send('', {})).rejects.toThrow(ValidationError);
+      await expect(mockClient.send('', {})).rejects.toThrow('Command must be a non-empty string');
     });
 
     it('should handle AbortSignal timeout', async () => {
@@ -139,6 +141,34 @@ describe('MockRpcClient', () => {
 
       const history = mockClient.getCallHistory();
       expect(history[0].options).toEqual({ timeout: 3000 });
+    });
+
+    it('should track custom correlationId in call history', async () => {
+      mockClient.mockResponse('TEST', { ok: true });
+
+      await mockClient.send('TEST', { data: 'test' }, { correlationId: 'trace-123' });
+
+      const history = mockClient.getCallHistory();
+      expect(history[0].options?.correlationId).toBe('trace-123');
+    });
+
+    it('should track correlationId with metadata and timeout', async () => {
+      mockClient.mockResponse('CREATE_USER', { userId: 456 });
+
+      await mockClient.send(
+        'CREATE_USER',
+        { name: 'John' },
+        {
+          correlationId: 'req-abc-123',
+          metadata: { source: 'api', userId: '789' },
+          timeout: 5000,
+        }
+      );
+
+      const history = mockClient.getCallHistory();
+      expect(history[0].options?.correlationId).toBe('req-abc-123');
+      expect(history[0].options?.metadata).toEqual({ source: 'api', userId: '789' });
+      expect(history[0].options?.timeout).toBe(5000);
     });
   });
 

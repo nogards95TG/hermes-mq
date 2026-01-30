@@ -12,6 +12,7 @@ interface PublishedEvent {
     routingKey?: string;
     persistent?: boolean;
     metadata?: Record<string, any>;
+    correlationId?: string;
   };
 }
 
@@ -39,6 +40,7 @@ export class MockPublisher {
       routingKey?: string;
       persistent?: boolean;
       metadata?: Record<string, any>;
+      correlationId?: string;
     }
   ): Promise<void> {
     if (this.closed) {
@@ -62,6 +64,7 @@ export class MockPublisher {
             routingKey: options.routingKey,
             persistent: options.persistent,
             metadata: options.metadata,
+            correlationId: options.correlationId,
           }
         : undefined,
     });
@@ -78,6 +81,7 @@ export class MockPublisher {
       routingKey?: string;
       persistent?: boolean;
       metadata?: Record<string, any>;
+      correlationId?: string;
     }
   ): Promise<void> {
     if (!Array.isArray(exchanges) || exchanges.length === 0) {

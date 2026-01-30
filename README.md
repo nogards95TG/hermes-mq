@@ -104,7 +104,13 @@ const client = new RpcClient({
   timeout: 5000,
 });
 
+// Basic call
 const user = await client.send<{ id: string }, User>('GET_USER', { id: '123' });
+
+// With custom correlationId for request tracing (useful for debugging)
+const newUser = await client.send('CREATE_USER', data, {
+  correlationId: req.headers['x-trace-id'], // Pass trace ID from API
+});
 
 console.log(user);
 ```
@@ -124,9 +130,15 @@ const publisher = new Publisher({
   exchange: 'events',
 });
 
+// Basic publish
 await publisher.publish('user.created', {
   userId: '123',
   email: 'test@example.com',
+});
+
+// With correlationId for end-to-end tracing
+await publisher.publish('order.placed', orderData, {
+  correlationId: traceId, // Same ID from RPC call for request tracking
 });
 ```
 

@@ -202,6 +202,7 @@ export class RpcClient {
    * @param options.timeout - Custom timeout for this request (overrides default)
    * @param options.metadata - Additional metadata to send with the request
    * @param options.signal - AbortSignal to cancel the request
+   * @param options.correlationId - Custom correlation ID for request tracking (defaults to auto-generated UUID)
    * @returns Promise that resolves with the response data
    * @throws {TimeoutError} When request times out
    * @throws {ValidationError} When command is invalid
@@ -220,6 +221,12 @@ export class RpcClient {
    *   metadata: { userId: '123', traceId: 'abc' }
    * });
    *
+   * // With custom correlationId for tracing
+   * const result = await client.send('CREATE', data, {
+   *   correlationId: req.headers['x-trace-id'],
+   *   metadata: { userId: '123' }
+   * });
+   *
    * // With abort signal
    * const controller = new AbortController();
    * setTimeout(() => controller.abort(), 1000);
@@ -235,6 +242,7 @@ export class RpcClient {
       timeout?: number;
       metadata?: Record<string, any>;
       signal?: AbortSignal;
+      correlationId?: string;
     }
   ): Promise<TResponse> {
     // Use RetryPolicy if enabled, otherwise execute directly
@@ -259,6 +267,7 @@ export class RpcClient {
       timeout?: number;
       metadata?: Record<string, any>;
       signal?: AbortSignal;
+      correlationId?: string;
     }
   ): Promise<TResponse> {
     if (!command) {
@@ -274,7 +283,7 @@ export class RpcClient {
       });
     }
 
-    const correlationId = randomUUID();
+    const correlationId = options?.correlationId || randomUUID();
     const timeout = options?.timeout || this.config.timeout;
     const messageId = randomUUID();
 

@@ -68,6 +68,7 @@ interface PublishOptions {
   persistent?: boolean;
   mandatory?: boolean;
   metadata?: Record<string, any>;
+  correlationId?: string;
 }
 
 /**
@@ -184,6 +185,7 @@ export class Publisher {
    * @param options.routingKey - Custom routing key (uses eventName if not specified)
    * @param options.persistent - Whether to persist the message (default: true)
    * @param options.metadata - Additional metadata to include
+   * @param options.correlationId - Custom correlation ID for message tracking (defaults to auto-generated UUID)
    * @throws {ValidationError} When eventName is invalid
    * @throws {HermesError} When publishing fails
    *
@@ -200,6 +202,11 @@ export class Publisher {
    * // To specific exchange
    * await publisher.publish('notification', data, {
    *   exchange: 'notifications'
+   * });
+   *
+   * // With custom correlationId for tracing
+   * await publisher.publish('user.created', userData, {
+   *   correlationId: req.headers['x-trace-id']
    * });
    * ```
    */
@@ -219,6 +226,7 @@ export class Publisher {
     await this.assertExchange(channel, exchange, exchangeType);
 
     const messageId = randomUUID();
+    const correlationId = options.correlationId || randomUUID();
     const timestamp = Date.now();
 
     const envelope = {
@@ -237,6 +245,7 @@ export class Publisher {
           contentType: 'application/json',
           timestamp,
           messageId,
+          correlationId,
           mandatory,
         });
 

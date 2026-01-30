@@ -10,6 +10,7 @@ interface CallHistoryEntry {
   options?: {
     timeout?: number;
     metadata?: Record<string, any>;
+    correlationId?: string;
   };
 }
 
@@ -51,6 +52,7 @@ export class MockRpcClient {
       timeout?: number;
       metadata?: Record<string, any>;
       signal?: AbortSignal;
+      correlationId?: string;
     }
   ): Promise<TResponse> {
     if (this.closed) {
@@ -68,7 +70,9 @@ export class MockRpcClient {
       command: normalizedCommand,
       data,
       timestamp: Date.now(),
-      options: options ? { timeout: options.timeout, metadata: options.metadata } : undefined,
+      options: options
+        ? { timeout: options.timeout, metadata: options.metadata, correlationId: options.correlationId }
+        : undefined,
     });
 
     // Check if aborted

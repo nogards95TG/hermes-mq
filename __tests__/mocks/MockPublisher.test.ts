@@ -40,7 +40,9 @@ describe('MockPublisher', () => {
     });
 
     it('should validate event name is not empty', async () => {
-      await expect(mockPublisher.publish('', { data: 'test' })).rejects.toThrow(ValidationError);
+      await expect(mockPublisher.publish('', { data: 'test' })).rejects.toThrow(
+        'Event name must be a non-empty string'
+      );
     });
 
     it('should track metadata in options', async () => {
@@ -57,6 +59,36 @@ describe('MockPublisher', () => {
         source: 'test',
         version: '1.0',
       });
+    });
+
+    it('should track custom correlationId in options', async () => {
+      await mockPublisher.publish(
+        'user.created',
+        { userId: 123 },
+        {
+          correlationId: 'trace-xyz-789',
+        }
+      );
+
+      const events = mockPublisher.getPublishedEvents();
+      expect(events[0].options?.correlationId).toBe('trace-xyz-789');
+    });
+
+    it('should track correlationId with metadata', async () => {
+      await mockPublisher.publish(
+        'order.placed',
+        { orderId: 456, total: 99.99 },
+        {
+          correlationId: 'req-order-123',
+          metadata: { source: 'web', customerId: '789' },
+          persistent: true,
+        }
+      );
+
+      const events = mockPublisher.getPublishedEvents();
+      expect(events[0].options?.correlationId).toBe('req-order-123');
+      expect(events[0].options?.metadata).toEqual({ source: 'web', customerId: '789' });
+      expect(events[0].options?.persistent).toBe(true);
     });
 
     it('should track timestamp for each event', async () => {
@@ -111,12 +143,14 @@ describe('MockPublisher', () => {
     });
 
     it('should validate exchanges array is not empty', async () => {
-      await expect(mockPublisher.publishToMany([], 'event', {})).rejects.toThrow(ValidationError);
+      await expect(mockPublisher.publishToMany([], 'event', {})).rejects.toThrow(
+        'Exchanges must be a non-empty array'
+      );
     });
 
     it('should validate event name is not empty', async () => {
       await expect(mockPublisher.publishToMany(['exchange1'], '', {})).rejects.toThrow(
-        ValidationError
+        'Event name must be a non-empty string'
       );
     });
 
