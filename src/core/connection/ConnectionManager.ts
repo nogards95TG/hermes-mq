@@ -1,7 +1,7 @@
 import * as amqp from 'amqplib';
 import { EventEmitter } from 'events';
 import { Logger, SilentLogger } from '../types/Logger';
-import { ConnectionError } from '../types/Errors';
+import { ConnectionError } from '../errors';
 import type { DLQOptions } from '../types/Messages';
 import { asConnectionWithConfirm } from '../types/Amqp';
 import { CircuitBreaker } from '../resilience/CircuitBreaker';

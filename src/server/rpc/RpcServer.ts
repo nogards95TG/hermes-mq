@@ -19,14 +19,12 @@ import {
   RETRY,
   ACK_MODE,
   MALFORMED_MESSAGE_STRATEGY,
-} from '../../core';
-import { MessageParser } from '../../core/message/MessageParser';
-import { MessageDeduplicator } from '../../core/message/MessageDeduplicator';
-import {
+  MessageParser,
+  MessageDeduplicator,
   asConnectionWithConfirm,
   asChannelWithConnection,
   ExtendedError,
-} from '../../core/types/Amqp';
+} from '../../core';
 
 /**
  * RPC Server configuration
@@ -439,10 +437,10 @@ export class RpcServer {
     switch (strategy) {
       case 'reject':
       case 'dlq':
-        await this.channel.nack(msg, false, false);
+        this.safeNack(msg, false);
         break;
       case 'ignore':
-        await this.channel.ack(msg);
+        this.channel.ack(msg);
         break;
     }
   }
@@ -474,11 +472,11 @@ export class RpcServer {
   ): Promise<{ result: any; duplicate: boolean }> {
     const correlationId = msg.properties.correlationId;
 
-    const deduplicationResult = await this.deduplicator.process(msg, async () => {
+    const { result, duplicate } = await this.deduplicator.process(msg, async () => {
       return await handler(request.data, request.metadata);
     });
 
-    if (deduplicationResult.duplicate) {
+    if (duplicate) {
       this.config.logger.debug('Skipped duplicate request', {
         command: request.command,
         correlationId,
@@ -486,8 +484,8 @@ export class RpcServer {
     }
 
     return {
-      result: deduplicationResult.result,
-      duplicate: deduplicationResult.duplicate,
+      result,
+      duplicate,
     };
   }
 
@@ -568,8 +566,143 @@ export class RpcServer {
     if (!this.channel) return;
 
     if (this.config.ackStrategy.mode === 'auto') {
-      this.channel.ack(msg);
+      try {
+        this.channel.ack(msg);
+      } catch (ackError) {
+        // Channel might have been closed during execution
+        this.config.logger.debug('Failed to ack message - channel closed');
+      }
     }
+  }
+
+  /**
+   * Send error response to client
+   */
+  private async sendErrorResponse(
+    error: unknown,
+    correlationId: string | undefined,
+    replyTo: string
+  ): Promise<void> {
+    if (!this.channel) return;
+
+    try {
+      const extendedError = error as ExtendedError;
+      const response: ResponseEnvelope = {
+        id: correlationId || 'unknown',
+        timestamp: Date.now(),
+        success: false,
+        error: {
+          code: extendedError.name || 'HANDLER_ERROR',
+          message: extendedError.message,
+          details: extendedError.details,
+        },
+      };
+
+      const content = this.config.serializer.encode(response);
+
+      this.channel.sendToQueue(replyTo, content, {
+        correlationId,
+        contentType: 'application/json',
+      });
+
+      this.config.logger.debug('Sent error response', {
+        correlationId,
+        error: (error as Error).message,
+      });
+    } catch (replyError) {
+      this.config.logger.error('Failed to send error response', replyError as Error);
+    }
+  }
+
+  /**
+   * Calculate retry delay based on strategy
+   */
+  private calculateRetryDelay(attempts: number): number {
+    const retryDelay = this.config.ackStrategy.retryDelay;
+    if (!retryDelay) return 0;
+
+    return typeof retryDelay === 'function' ? retryDelay(attempts + 1) : retryDelay;
+  }
+
+  /**
+   * Determine if message should be requeued
+   */
+  private shouldRequeueMessage(error: unknown, attempts: number): boolean {
+    const strategy = this.config.ackStrategy;
+    const maxRetries = strategy.maxRetries ?? 3;
+
+    if (attempts >= maxRetries) return false;
+
+    const requeue = strategy.requeue;
+    return typeof requeue === 'function'
+      ? requeue(error as Error, attempts + 1)
+      : (requeue ?? true);
+  }
+
+  /**
+   * Update message headers for retry
+   */
+  private updateRetryHeaders(msg: amqp.ConsumeMessage, attempts: number): void {
+    msg.properties.headers = {
+      ...msg.properties.headers,
+      'x-retry-count': attempts + 1,
+      'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
+    };
+  }
+
+  /**
+   * Safely NACK a message with error handling
+   */
+  private safeNack(msg: amqp.ConsumeMessage, requeue: boolean, correlationId?: string): void {
+    if (!this.channel) return;
+
+    try {
+      this.channel.nack(msg, false, requeue);
+    } catch (nackError) {
+      this.config.logger.debug('Failed to nack message - channel closed', { correlationId });
+    }
+  }
+
+  /**
+   * Requeue message with retry logic
+   */
+  private requeueMessageWithRetry(
+    msg: amqp.ConsumeMessage,
+    attempts: number,
+    delay: number,
+    correlationId?: string
+  ): void {
+    this.updateRetryHeaders(msg, attempts);
+    // Fake delay logic - RabbitMQ does not support delayed requeue natively
+    // needs proper implementation with delayed exchanges or plugins
+    if (delay > 0) {
+      this.config.logger.debug('Scheduling retry with delay', {
+        correlationId,
+        delay,
+        attempt: attempts + 1,
+      });
+    }
+
+    this.safeNack(msg, true, correlationId);
+  }
+
+  /**
+   * Send message to Dead Letter Queue
+   */
+  private sendToDeadLetterQueue(
+    msg: amqp.ConsumeMessage,
+    attempts: number,
+    correlationId?: string
+  ): void {
+    const maxRetries = this.config.ackStrategy.maxRetries ?? 3;
+
+    this.config.logger.warn('Message sent to DLQ', {
+      correlationId,
+      attempts,
+      maxRetries,
+    });
+
+    this.safeNack(msg, false, correlationId);
   }
 
   /**
@@ -582,126 +715,25 @@ export class RpcServer {
     replyTo: string | undefined
   ): Promise<void> {
     const strategy = this.config.ackStrategy;
-    const maxRetries = strategy.maxRetries ?? 3;
     const attempts = (msg.properties.headers?.['x-retry-count'] as number) || 0;
 
+    // Handle manual mode
     if (strategy.mode === 'manual') {
-      // Let user handle via context (would need to be implemented with context pattern)
-      // For now just NACK without requeue to send to DLQ
-      if (this.channel) {
-        this.channel.nack(msg, false, false);
-      }
+      this.safeNack(msg, false, correlationId);
       return;
     }
 
-    // Determine if we should requeue
-    const shouldRequeue =
-      typeof strategy.requeue === 'function'
-        ? strategy.requeue(error as Error, attempts + 1)
-        : (strategy.requeue ?? true);
-
-    // Send error response
-    if (replyTo && this.channel) {
-      try {
-        const extendedError = error as ExtendedError;
-        const response: ResponseEnvelope = {
-          id: correlationId || 'unknown',
-          timestamp: Date.now(),
-          success: false,
-          error: {
-            code: extendedError.name || 'HANDLER_ERROR',
-            message: extendedError.message,
-            details: extendedError.details,
-          },
-        };
-
-        const content = this.config.serializer.encode(response);
-
-        this.channel.sendToQueue(replyTo, content, {
-          correlationId,
-          contentType: 'application/json',
-        });
-
-        this.config.logger.debug('Sent error response', {
-          correlationId,
-          error: (error as Error).message,
-        });
-      } catch (replyError) {
-        this.config.logger.error('Failed to send error response', replyError as Error);
-      }
+    // Send error response to client
+    if (replyTo) {
+      await this.sendErrorResponse(error, correlationId, replyTo);
     }
 
-    // Determine action based on retry count and strategy
-    if (this.channel) {
-      if (shouldRequeue && attempts < maxRetries) {
-        // Calculate delay if configured
-        let delay = 0;
-        if (strategy.retryDelay) {
-          delay =
-            typeof strategy.retryDelay === 'function'
-              ? strategy.retryDelay(attempts + 1)
-              : strategy.retryDelay;
-        }
-
-        if (delay > 0) {
-          // Schedule retry with delay
-          // Note: This would require the RabbitMQ delayed message plugin
-          // or implementation of a delay queue
-          this.config.logger.debug('Scheduling retry with delay', {
-            correlationId,
-            delay,
-            attempt: attempts + 1,
-          });
-
-          // For now, increment retry count and requeue
-          msg.properties.headers = {
-            ...msg.properties.headers,
-            'x-retry-count': attempts + 1,
-            'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
-          };
-
-          try {
-            this.channel.nack(msg, false, true); // Requeue with delay (approximate)
-          } catch (nackError) {
-            // Channel might have been closed during execution
-            this.config.logger.debug('Failed to nack message - channel closed', {
-              correlationId,
-            });
-          }
-        } else {
-          // Requeue immediately
-          msg.properties.headers = {
-            ...msg.properties.headers,
-            'x-retry-count': attempts + 1,
-            'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
-          };
-
-          try {
-            this.channel.nack(msg, false, true);
-          } catch (nackError) {
-            // Channel might have been closed during execution
-            this.config.logger.debug('Failed to nack message - channel closed', {
-              correlationId,
-            });
-          }
-        }
-      } else {
-        // Max retries exceeded or should not requeue - send to DLQ
-        this.config.logger.warn('Message sent to DLQ', {
-          correlationId,
-          attempts,
-          maxRetries,
-        });
-
-        try {
-          this.channel.nack(msg, false, false); // NACK without requeue - goes to DLQ
-        } catch (nackError) {
-          // Channel might have been closed during execution
-          this.config.logger.debug('Failed to nack message - channel closed', {
-            correlationId,
-          });
-        }
-      }
+    // Determine retry or DLQ
+    if (this.shouldRequeueMessage(error, attempts)) {
+      const delay = this.calculateRetryDelay(attempts);
+      this.requeueMessageWithRetry(msg, attempts, delay, correlationId);
+    } else {
+      this.sendToDeadLetterQueue(msg, attempts, correlationId);
     }
   }
 
@@ -776,35 +808,37 @@ export class RpcServer {
       threshold = thresholds.warn;
     }
 
-    if (level) {
-      const context = {
-        command,
-        duration,
-        threshold,
-        level,
-        messageId,
-        metadata,
-      };
+    if (!level) {
+      return;
+    }
 
-      // Call user callback if provided
-      if (this.config.slowMessageDetection?.onSlowMessage) {
-        this.config.slowMessageDetection.onSlowMessage(context);
-      }
+    const context = {
+      command,
+      duration,
+      threshold,
+      level,
+      messageId,
+      metadata,
+    };
 
-      // Log by default
-      const logMessage = `Slow message detected: ${command} took ${duration}ms (threshold: ${threshold}ms)`;
-      const logContext = {
-        command,
-        duration,
-        threshold,
-        messageId,
-      };
+    // Call user callback if provided
+    if (this.config.slowMessageDetection?.onSlowMessage) {
+      this.config.slowMessageDetection.onSlowMessage(context);
+    }
 
-      if (level === 'error') {
-        this.config.logger.error(logMessage, undefined, logContext);
-      } else {
-        this.config.logger.warn(logMessage, logContext);
-      }
+    // Log by default
+    const logMessage = `Slow message detected: ${command} took ${duration}ms (threshold: ${threshold}ms)`;
+    const logContext = {
+      command,
+      duration,
+      threshold,
+      messageId,
+    };
+
+    if (level === 'error') {
+      this.config.logger.error(logMessage, undefined, logContext);
+    } else {
+      this.config.logger.warn(logMessage, logContext);
     }
   }
 
@@ -859,6 +893,7 @@ export class RpcServer {
 
       // Close channel
       if (this.channel) {
+        // Todo: safe close
         try {
           await this.channel.close();
         } catch (error) {

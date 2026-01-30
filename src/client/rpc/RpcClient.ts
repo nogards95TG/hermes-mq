@@ -15,9 +15,10 @@ import {
   RetryConfig,
   RetryPolicy,
   TIME,
+  asConnectionWithConfirm,
+  ExtendedError,
 } from '../../core';
-import { asConnectionWithConfirm, ExtendedError } from '../../core/types/Amqp';
-import { NetworkErrors } from '../../core/constants';
+import { NETWORK_ERRORS } from '../../core/constants';
 
 /**
  * RPC Client configuration
@@ -132,7 +133,7 @@ export class RpcClient {
             // Retry on timeout
             if (error.name === 'TimeoutError') return true;
             // Retry on network errors
-            return NetworkErrors.some((code) => error.message?.includes(code));
+            return NETWORK_ERRORS.some((code) => error.message?.includes(code));
           }),
       };
       this.retryPolicy = new RetryPolicy(retryConfig, this.config.logger);

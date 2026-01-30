@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { ConsumerReconnectionManager } from '../../src/core/utils/ConsumerReconnectionManager';
-import { ConsoleLogger } from '../../src/core/types/Logger';
 import { TIME, LIMITS } from '../../src/core/constants';
+import { ConsumerReconnectionManager } from '../../src/core';
 
 describe('ConsumerReconnectionManager', () => {
   let manager: ConsumerReconnectionManager;
@@ -30,7 +29,9 @@ describe('ConsumerReconnectionManager', () => {
       // First attempt
       manager.scheduleReconnect(reconnectCallback);
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining(`Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.stringContaining(
+          `Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`
+        ),
         expect.objectContaining({ delay: TIME.CONSUMER_RECONNECT_BASE_DELAY_MS })
       );
 
@@ -108,9 +109,7 @@ describe('ConsumerReconnectionManager', () => {
       manager.scheduleReconnect(reconnectCallback);
       manager.scheduleReconnect(reconnectCallback);
 
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        'Reconnection already scheduled, skipping'
-      );
+      expect(mockLogger.debug).toHaveBeenCalledWith('Reconnection already scheduled, skipping');
 
       await vi.advanceTimersByTimeAsync(5000);
       expect(reconnectCallback).toHaveBeenCalledTimes(1);
@@ -136,7 +135,9 @@ describe('ConsumerReconnectionManager', () => {
 
       // Attempt 4 should be capped to 30s instead of 40s
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining(`Scheduling consumer reconnection attempt 4/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.stringContaining(
+          `Scheduling consumer reconnection attempt 4/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`
+        ),
         expect.objectContaining({ delay: customMaxDelay })
       );
     });
@@ -270,7 +271,9 @@ describe('ConsumerReconnectionManager', () => {
 
       manager.scheduleReconnect(reconnectCallback);
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining(`Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`),
+        expect.stringContaining(
+          `Scheduling consumer reconnection attempt 1/${LIMITS.MAX_CONSUMER_RECONNECT_ATTEMPTS}`
+        ),
         expect.objectContaining({ delay: 10_000 })
       );
     });

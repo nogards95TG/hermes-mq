@@ -77,7 +77,8 @@ export {
   MessageParsingError,
   StateError,
   RetryExhaustedError,
-} from './types/Errors';
+  PublishError,
+} from './errors';
 
 // Health Check
 export { HealthChecker } from './health/HealthChecker';
@@ -95,12 +96,12 @@ export { MetricsCollector } from './metrics/MetricsCollector';
 export type { Labels, MetricType, HistogramConfig } from './metrics/MetricsCollector';
 
 // Utils
-export { ConsumerReconnectionManager } from './utils/ConsumerReconnectionManager';
+export { ConsumerReconnectionManager } from './connection/ConsumerReconnectionManager';
 export type {
   ConsumerReconnectionConfig,
   ReconnectionResult,
   ReconnectCallback,
-} from './utils/ConsumerReconnectionManager';
+} from './connection/ConsumerReconnectionManager';
 
 // Constants
 export {
@@ -111,4 +112,5 @@ export {
   MALFORMED_MESSAGE_STRATEGY,
   EXCHANGE_TYPE,
   CONFIRM_MODE,
+  NETWORK_ERRORS,
 } from './constants';

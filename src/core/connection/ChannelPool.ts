@@ -1,6 +1,6 @@
 import * as amqp from 'amqplib';
 import { Logger, SilentLogger } from '../types/Logger';
-import { ChannelError } from '../types/Errors';
+import { ChannelError } from '../errors';
 import { TIME } from '../constants';
 
 /**

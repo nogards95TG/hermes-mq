@@ -18,9 +18,9 @@ import {
   ACK_MODE,
   MALFORMED_MESSAGE_STRATEGY,
   EXCHANGE_TYPE,
+  MessageParser,
+  asConnectionWithConfirm,
 } from '../../core';
-import { MessageParser } from '../../core/message/MessageParser';
-import { asConnectionWithConfirm } from '../../core/types/Amqp';
 
 /**
  * Error handling configuration for subscribers

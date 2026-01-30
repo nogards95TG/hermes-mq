@@ -1,5 +1,5 @@
 import { Message } from 'amqplib';
-import { MessageValidationError, MessageParsingError } from '../types/Errors';
+import { MessageValidationError, MessageParsingError } from '../errors';
 import { MessageValidationOptions } from '../types/Messages';
 
 /**

@@ -7,7 +7,7 @@ import {
   ValidationError,
   StateError,
   RetryExhaustedError,
-} from '../../src/core/types/Errors';
+} from '../../src/core/errors';
 
 describe('Errors', () => {
   describe('HermesError', () => {

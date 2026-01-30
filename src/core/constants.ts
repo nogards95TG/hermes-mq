@@ -158,7 +158,7 @@ export const CONFIRM_MODE = {
   ASYNC: 'async',
 } as const;
 
-export const NetworkErrors = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'];
+export const NETWORK_ERRORS = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'];
 
 /**
  * Default retryable errors (network and connection errors only)

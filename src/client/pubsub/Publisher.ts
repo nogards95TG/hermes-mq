@@ -14,9 +14,10 @@ import {
   RETRY,
   EXCHANGE_TYPE,
   CONFIRM_MODE,
+  asConnectionWithConfirm,
+  asExtendedConfirmChannel,
+  PublishError,
 } from '../../core';
-import { asConnectionWithConfirm, asExtendedConfirmChannel } from '../../core/types/Amqp';
-import { PublishError } from '../../core/types/Errors';
 
 /**
  * Publisher configuration
