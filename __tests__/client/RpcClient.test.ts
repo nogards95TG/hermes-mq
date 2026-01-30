@@ -381,6 +381,134 @@ describe('RpcClient', () => {
     });
   });
 
+  describe('retry logic', () => {
+    it('should retry on timeout errors', async () => {
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        timeout: 100,
+        retry: {
+          enabled: true,
+          maxAttempts: 3,
+          initialDelay: 1,
+        },
+      });
+
+      let attemptCount = 0;
+
+      // Initialize the client first
+      await client.send('INIT', {}).catch(() => {});
+
+      vi.spyOn(client as any, 'sendInternal').mockImplementation(async () => {
+        attemptCount++;
+        if (attemptCount <= 2) {
+          throw new TimeoutError('Request timeout', { timeout: 100 });
+        }
+        // On third attempt, succeed
+        return { result: 'success' };
+      });
+
+      const result = await client.send('TEST', {});
+
+      expect(attemptCount).toBe(3);
+      expect(result).toEqual({ result: 'success' });
+    });
+
+    it('should throw after max retry attempts on timeout', async () => {
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        timeout: 100,
+        retry: {
+          enabled: true,
+          maxAttempts: 2,
+          initialDelay: 1,
+        },
+      });
+
+      let attemptCount = 0;
+      vi.spyOn(client as any, 'sendInternal').mockImplementation(async () => {
+        attemptCount++;
+        throw new TimeoutError('Request timeout', { timeout: 100 });
+      });
+
+      await expect(client.send('TEST', {})).rejects.toThrow(TimeoutError);
+      expect(attemptCount).toBe(2);
+    });
+
+    it('should not retry on non-timeout errors', async () => {
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        retry: {
+          enabled: true,
+          maxAttempts: 3,
+          initialDelay: 1,
+        },
+      });
+
+      let attemptCount = 0;
+      vi.spyOn(client as any, 'sendInternal').mockImplementation(async () => {
+        attemptCount++;
+        throw new Error('Validation error');
+      });
+
+      await expect(client.send('TEST', {})).rejects.toThrow('Validation error');
+      expect(attemptCount).toBe(1); // Should not retry
+    });
+
+    it('should allow custom shouldRetry function', async () => {
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        retry: {
+          enabled: true,
+          maxAttempts: 3,
+          initialDelay: 1,
+          shouldRetry: (error: Error) => error.message.includes('ECONNREFUSED'),
+        },
+      });
+
+      let attemptCount = 0;
+
+      // Initialize the client first
+      await client.send('INIT', {}).catch(() => {});
+
+      vi.spyOn(client as any, 'sendInternal').mockImplementation(async () => {
+        attemptCount++;
+        if (attemptCount <= 2) {
+          throw new Error('ECONNREFUSED: Connection refused');
+        }
+        // On third attempt, succeed
+        return { result: 'success' };
+      });
+
+      const result = await client.send('TEST', {});
+
+      expect(attemptCount).toBe(3);
+      expect(result).toEqual({ result: 'success' });
+    });
+
+    it('should work without retry when disabled', async () => {
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        retry: {
+          enabled: false,
+        },
+      });
+
+      let attemptCount = 0;
+      vi.spyOn(client as any, 'sendInternal').mockImplementation(async () => {
+        attemptCount++;
+        throw new TimeoutError('Request timeout', { timeout: 100 });
+      });
+
+      await expect(client.send('TEST', {})).rejects.toThrow(TimeoutError);
+      expect(attemptCount).toBe(1); // Should not retry when disabled
+    });
+  });
+
   describe('cleanup of expired requests', () => {
     beforeEach(() => {
       vi.useFakeTimers();

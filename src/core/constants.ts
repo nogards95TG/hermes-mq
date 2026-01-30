@@ -157,3 +157,18 @@ export const CONFIRM_MODE = {
   SYNC: 'sync',
   ASYNC: 'async',
 } as const;
+
+export const NetworkErrors = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'];
+
+/**
+ * Default retryable errors (network and connection errors only)
+ * Does not include "Channel closed" as it indicates intentional closure
+ */
+export const DEFAULT_RETRYABLE_ERRORS: Array<string | RegExp> = [
+  /ECONNREFUSED/,
+  /ETIMEDOUT/,
+  /ENOTFOUND/,
+  /EHOSTUNREACH/,
+  /ECONNRESET/,
+  /EPIPE/,
+];

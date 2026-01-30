@@ -425,6 +425,7 @@ describe('Publisher', () => {
           enabled: true,
           maxAttempts: 3,
           initialDelay: 1, // Use very short delays for test
+          retryableErrors: [/Network error/], // Explicitly specify retryable errors for this test
         },
       });
 
@@ -452,6 +453,7 @@ describe('Publisher', () => {
           enabled: true,
           maxAttempts: 2,
           initialDelay: 1, // Use very short delays for test
+          retryableErrors: [/Network error/], // Explicitly specify retryable errors for this test
         },
       });
 

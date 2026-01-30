@@ -121,7 +121,7 @@ describe('Metrics Integration Tests', () => {
       // Verify timeout counter
       expect(output).toContain('hermes_rpc_requests_total');
       expect(output).toMatch(
-        /hermes_rpc_requests_total\{queue="test-rpc-metrics-timeout",status="timeout"\} 1/
+        /hermes_rpc_requests_total\{queue="test-rpc-metrics-timeout",status="timeout"\} 3/
       );
 
       await client.close();

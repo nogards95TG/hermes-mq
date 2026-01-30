@@ -1,5 +1,5 @@
 import { Logger, SilentLogger } from '../types/Logger';
-import { RETRY } from '../constants';
+import { DEFAULT_RETRYABLE_ERRORS, RETRY } from '../constants';
 
 /**
  * Retry configuration options
@@ -32,6 +32,7 @@ const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'shouldRetry' | 'retryabl
   initialDelay: RETRY.DEFAULT_INITIAL_DELAY_MS,
   maxDelay: RETRY.DEFAULT_MAX_DELAY_MS,
   backoffMultiplier: 2,
+  retryableErrors: DEFAULT_RETRYABLE_ERRORS,
 };
 
 /**
@@ -74,10 +75,11 @@ export class RetryPolicy {
   private isRetryableError(error: Error): boolean {
     const errorMessage = error.message || '';
     const errorName = error.name || '';
-    if (!this.config.retryableErrors || this.config.retryableErrors.length === 0) {
-      return true; // Retry all errors by default
-    }
-    return this.config.retryableErrors.some((pattern) => {
+
+    // Use default retryable errors if none specified
+    const patterns = this.config.retryableErrors || DEFAULT_RETRYABLE_ERRORS;
+
+    return patterns.some((pattern) => {
       if (pattern instanceof RegExp) {
         return pattern.test(errorMessage) || pattern.test(errorName);
       }

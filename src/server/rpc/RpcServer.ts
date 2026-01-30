@@ -57,9 +57,7 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
 /**
  * Required RPC server configuration with defaults applied
  */
-type RequiredRpcServerConfig = Required<
-  Omit<RpcServerConfig, 'connection'>
-> & {
+type RequiredRpcServerConfig = Required<Omit<RpcServerConfig, 'connection'>> & {
   logger: Logger;
   serializer: Serializer;
   metrics?: MetricsCollector;
@@ -249,7 +247,10 @@ export class RpcServer {
         // Attempt to re-register the consumer after a delay
         setTimeout(() => {
           this.reRegisterConsumer().catch((error) => {
-            this.config.logger.error('Failed to re-register consumer after cancellation', error as Error);
+            this.config.logger.error(
+              'Failed to re-register consumer after cancellation',
+              error as Error
+            );
           });
         }, 5000);
       });
@@ -659,7 +660,14 @@ export class RpcServer {
             'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
           };
 
-          this.channel.nack(msg, false, true); // Requeue with delay (approximate)
+          try {
+            this.channel.nack(msg, false, true); // Requeue with delay (approximate)
+          } catch (nackError) {
+            // Channel might have been closed during execution
+            this.config.logger.debug('Failed to nack message - channel closed', {
+              correlationId,
+            });
+          }
         } else {
           // Requeue immediately
           msg.properties.headers = {
@@ -668,7 +676,14 @@ export class RpcServer {
             'x-first-failure': msg.properties.headers?.['x-first-failure'] || Date.now(),
           };
 
-          this.channel.nack(msg, false, true);
+          try {
+            this.channel.nack(msg, false, true);
+          } catch (nackError) {
+            // Channel might have been closed during execution
+            this.config.logger.debug('Failed to nack message - channel closed', {
+              correlationId,
+            });
+          }
         }
       } else {
         // Max retries exceeded or should not requeue - send to DLQ
@@ -678,7 +693,14 @@ export class RpcServer {
           maxRetries,
         });
 
-        this.channel.nack(msg, false, false); // NACK without requeue - goes to DLQ
+        try {
+          this.channel.nack(msg, false, false); // NACK without requeue - goes to DLQ
+        } catch (nackError) {
+          // Channel might have been closed during execution
+          this.config.logger.debug('Failed to nack message - channel closed', {
+            correlationId,
+          });
+        }
       }
     }
   }

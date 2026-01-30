@@ -17,6 +17,7 @@ import {
   TIME,
 } from '../../core';
 import { asConnectionWithConfirm, ExtendedError } from '../../core/types/Amqp';
+import { NetworkErrors } from '../../core/constants';
 
 /**
  * RPC Client configuration
@@ -63,9 +64,7 @@ const DEFAULT_CONFIG = {
 /**
  * Required RPC client configuration with defaults applied
  */
-type RequiredRpcClientConfig = Required<
-  Omit<RpcClientConfig, 'connection'>
-> & {
+type RequiredRpcClientConfig = Required<Omit<RpcClientConfig, 'connection'>> & {
   logger: Logger;
   serializer: Serializer;
   metrics?: MetricsCollector;
@@ -127,9 +126,14 @@ export class RpcClient {
     if (config.retry?.enabled !== false) {
       const retryConfig = {
         ...config.retry,
-        shouldRetry: config.retry?.shouldRetry ?? ((error: Error) => {
-          return error.name === 'TimeoutError';
-        }),
+        shouldRetry:
+          config.retry?.shouldRetry ??
+          ((error: Error) => {
+            // Retry on timeout
+            if (error.name === 'TimeoutError') return true;
+            // Retry on network errors
+            return NetworkErrors.some((code) => error.message?.includes(code));
+          }),
       };
       this.retryPolicy = new RetryPolicy(retryConfig, this.config.logger);
     }
