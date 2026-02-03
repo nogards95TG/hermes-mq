@@ -18,6 +18,7 @@ import {
   asExtendedConfirmChannel,
   PublishError,
 } from '../../core';
+import { filterReservedHeaders } from '../utils';
 
 /**
  * Publisher configuration
@@ -228,15 +229,7 @@ export class Publisher {
     const messageId = randomUUID();
     const correlationId = options.correlationId || randomUUID();
     const timestamp = Date.now();
-
-    const envelope = {
-      eventName,
-      data,
-      timestamp,
-      metadata: options.metadata,
-    };
-
-    const payload = this.config.serializer.encode(envelope);
+    const payload = this.config.serializer.encode(data);
 
     const publishOperation = async () => {
       try {
@@ -247,6 +240,7 @@ export class Publisher {
           messageId,
           correlationId,
           mandatory,
+          headers: filterReservedHeaders(options.metadata),
         });
 
         // Handle backpressure - wait for channel to drain if needed

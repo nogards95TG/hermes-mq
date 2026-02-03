@@ -105,6 +105,11 @@ export const LIMITS = {
 } as const;
 
 /**
+ * Header prefixes that are reserved for internal use
+ */
+export const RESERVED_HEADER_PREFIXES = ['x-retry', 'x-hermes'];
+
+/**
  * Default retry configuration values
  */
 export const RETRY = {

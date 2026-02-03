@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { Subscriber } from '../../src/server/pubsub/Subscriber';
-import { ValidationError, ConnectionManager } from '../../src/core';
+import { ConnectionManager } from '../../src/core';
 
 // Mock ConnectionManager
 vi.mock('../../src/core', async () => {
@@ -70,7 +70,7 @@ describe('Subscriber', () => {
           connection: mockConnectionManager,
           exchange: '',
         });
-      }).toThrow(ValidationError);
+      }).toThrow('Exchange is required');
     });
 
     it('should accept custom queue name', () => {
@@ -102,17 +102,17 @@ describe('Subscriber', () => {
     it('should throw ValidationError for invalid pattern', () => {
       expect(() => {
         subscriber.on('', vi.fn());
-      }).toThrow(ValidationError);
+      }).toThrow('Event pattern must be a non-empty string');
 
       expect(() => {
         subscriber.on(null as any, vi.fn());
-      }).toThrow(ValidationError);
+      }).toThrow('Event pattern must be a non-empty string');
     });
 
     it('should throw ValidationError for non-function handler', () => {
       expect(() => {
         subscriber.on('pattern', null as any);
-      }).toThrow(ValidationError);
+      }).toThrow('Handler must be a function');
     });
 
     it('should allow multiple handlers for same pattern', () => {
@@ -160,7 +160,7 @@ describe('Subscriber', () => {
     });
 
     it('should throw ValidationError if no handlers registered', async () => {
-      await expect(subscriber.start()).rejects.toThrow(ValidationError);
+      await expect(subscriber.start()).rejects.toThrow('No handlers registered');
     });
 
     it('should bind multiple patterns', async () => {
@@ -254,16 +254,11 @@ describe('Subscriber', () => {
       subscriber.on('user.created', handler);
       await subscriber.start();
 
+      // New format: raw payload, eventName from routingKey, timestamp/metadata from AMQP properties
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.created',
-            data: { id: 1 },
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({ id: 1 })),
         fields: { routingKey: 'user.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
 
       await consumeCallback(message);
@@ -289,31 +284,18 @@ describe('Subscriber', () => {
       subscriber.on('user.*', handler);
       await subscriber.start();
 
-      // Should match
+      // New format: raw payload
       const message1 = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'user.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
       await consumeCallback(message1);
 
-      // Should match
       const message2 = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.updated',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'user.updated' },
-        properties: { messageId: 'msg-2' },
+        properties: { messageId: 'msg-2', timestamp: Date.now() },
       };
       await consumeCallback(message2);
 
@@ -332,31 +314,18 @@ describe('Subscriber', () => {
       subscriber.on('order.#', handler);
       await subscriber.start();
 
-      // Should match - one word
+      // New format: raw payload
       const message1 = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'order.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'order.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
       await consumeCallback(message1);
 
-      // Should match - multiple words
       const message2 = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'order.shipped.express',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'order.shipped.express' },
-        properties: { messageId: 'msg-2' },
+        properties: { messageId: 'msg-2', timestamp: Date.now() },
       };
       await consumeCallback(message2);
 
@@ -375,17 +344,11 @@ describe('Subscriber', () => {
       subscriber.on('user.*', handler);
       await subscriber.start();
 
-      // Should NOT match - wrong prefix
+      // New format: raw payload - Should NOT match - wrong prefix
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'order.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'order.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
       await consumeCallback(message);
 
@@ -407,16 +370,11 @@ describe('Subscriber', () => {
       subscriber.on('user.created', handler2);
       await subscriber.start();
 
+      // New format: raw payload
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'user.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
 
       await consumeCallback(message);
@@ -446,16 +404,11 @@ describe('Subscriber', () => {
       subscriber.on('user.created', handler);
       await subscriber.start();
 
+      // New format: raw payload
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'user.created' },
-        properties: { messageId: 'msg-1' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
       };
 
       await consumeCallback(message);
@@ -544,16 +497,11 @@ describe('Subscriber', () => {
       subscriber.on('user.created', handler);
       await subscriber.start();
 
+      // New format: raw payload
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'user.created',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'user.created' },
-        properties: { messageId: 'msg-123' },
+        properties: { messageId: 'msg-123', timestamp: Date.now() },
       };
 
       await consumeCallback(message);
@@ -597,16 +545,11 @@ describe('Subscriber', () => {
       subscriber.on('order.placed', handler);
       await subscriber.start();
 
+      // New format: raw payload
       const message = {
-        content: Buffer.from(
-          JSON.stringify({
-            eventName: 'order.placed',
-            data: {},
-            timestamp: Date.now(),
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         fields: { routingKey: 'order.placed' },
-        properties: { messageId: 'msg-456' },
+        properties: { messageId: 'msg-456', timestamp: Date.now() },
       };
 
       await consumeCallback(message);
@@ -682,12 +625,12 @@ describe('Subscriber', () => {
         return Promise.resolve({ consumerTag: 'test' });
       });
 
-      const handler = vi.fn().mockImplementation(
-        () =>
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Handler failed')), 150)
-          )
-      );
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () =>
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Handler failed')), 150))
+        );
       subscriber.on('payment.failed', handler);
       await subscriber.start();
 

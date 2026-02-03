@@ -141,16 +141,15 @@ describe('Publisher', () => {
       );
     });
 
-    it('should include metadata in envelope', async () => {
-      await publisher.publish('event', {}, { metadata: { userId: '123' } });
+    it('should include metadata in AMQP headers', async () => {
+      await publisher.publish('event', { foo: 'bar' }, { metadata: { userId: '123' } });
 
       const publishCall = mockChannel.publish.mock.calls[0];
       const payload = JSON.parse(publishCall[2].toString());
+      const options = publishCall[3];
 
-      expect(payload).toMatchObject({
-        eventName: 'event',
-        metadata: { userId: '123' },
-      });
+      expect(payload).toEqual({ foo: 'bar' });
+      expect(options.headers).toEqual({ userId: '123' });
     });
 
     it('should throw ValidationError for invalid event name', async () => {

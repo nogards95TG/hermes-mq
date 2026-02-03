@@ -113,17 +113,11 @@ describe('RpcClient', () => {
       expect(mockConnection._lastMessage.options.correlationId).toBeDefined();
       expect(mockConnection._lastMessage.options.replyTo).toBe('amq.rabbitmq.reply-to');
 
-      // Simulate response
+      // Simulate raw response
       const correlationId = mockConnection._lastMessage.options.correlationId;
-      const response = {
-        id: correlationId,
-        timestamp: Date.now(),
-        success: true,
-        data: { result: 'success' },
-      };
 
       mockConnection._consumeCallback({
-        content: Buffer.from(JSON.stringify(response)),
+        content: Buffer.from(JSON.stringify({ result: 'success' })),
         properties: { correlationId },
       });
 
@@ -136,20 +130,14 @@ describe('RpcClient', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const content = JSON.parse(mockConnection._lastMessage.content.toString());
-      expect(content.command).toBe('TEST_COMMAND');
+      // Command goes in AMQP 'type' property
+      const options = mockConnection._lastMessage.options;
+      expect(options.type).toBe('TEST_COMMAND');
 
-      // Simulate response to prevent timeout
-      const correlationId = mockConnection._lastMessage.options.correlationId;
+      // Simulate raw response to prevent timeout
+      const correlationId = options.correlationId;
       mockConnection._consumeCallback({
-        content: Buffer.from(
-          JSON.stringify({
-            id: correlationId,
-            timestamp: Date.now(),
-            success: true,
-            data: {},
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         properties: { correlationId },
       });
 
@@ -210,20 +198,14 @@ describe('RpcClient', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const content = JSON.parse(mockConnection._lastMessage.content.toString());
-      expect(content.metadata).toEqual(metadata);
+      // Metadata goes in AMQP headers
+      const options = mockConnection._lastMessage.options;
+      expect(options.headers).toEqual(metadata);
 
-      // Simulate response
-      const correlationId = mockConnection._lastMessage.options.correlationId;
+      // Simulate raw response
+      const correlationId = options.correlationId;
       mockConnection._consumeCallback({
-        content: Buffer.from(
-          JSON.stringify({
-            id: correlationId,
-            timestamp: Date.now(),
-            success: true,
-            data: {},
-          })
-        ),
+        content: Buffer.from(JSON.stringify({})),
         properties: { correlationId },
       });
 
@@ -333,9 +315,7 @@ describe('RpcClient', () => {
 
   describe('initialization errors', () => {
     it('should throw error when initialization fails', async () => {
-      mockConnection.createConfirmChannel = vi
-        .fn()
-        .mockRejectedValueOnce(new Error('Init failed'));
+      mockConnection.createConfirmChannel = vi.fn().mockRejectedValueOnce(new Error('Init failed'));
 
       client = new RpcClient({
         connection: mockConnectionManager,

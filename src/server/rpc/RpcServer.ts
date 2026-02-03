@@ -5,7 +5,6 @@ import {
   Logger,
   SilentLogger,
   RequestEnvelope,
-  ResponseEnvelope,
   Serializer,
   JsonSerializer,
   AckStrategy,
@@ -411,10 +410,23 @@ export class RpcServer {
       return null;
     }
 
-    const request: RequestEnvelope = parseResult.data;
+    // Parse raw payload and reconstruct request from AMQP properties
+    const parsed = parseResult.data;
+    const command = msg.properties.type || 'UNKNOWN';
+    const requestCorrelationId = msg.properties.correlationId || '';
 
-    if (!request.command) {
-      throw ValidationError.commandRequired('Command is required in request');
+    const request: RequestEnvelope = {
+      id: requestCorrelationId,
+      command: command.toUpperCase(),
+      timestamp: msg.properties.timestamp || Date.now(),
+      data: parsed,
+      metadata: msg.properties.headers,
+    };
+
+    if (!request.command || request.command === 'UNKNOWN') {
+      throw ValidationError.commandRequired(
+        'Command is required in request (use AMQP type property)'
+      );
     }
 
     this.config.logger.debug('Received RPC request', {
@@ -539,14 +551,8 @@ export class RpcServer {
   ): Promise<void> {
     if (!replyTo || !this.channel) return;
 
-    const response: ResponseEnvelope = {
-      id: request.id,
-      timestamp: Date.now(),
-      success: true,
-      data: result,
-    };
-
-    const content = this.config.serializer.encode(response);
+    // Success: send raw result directly (no envelope)
+    const content = this.config.serializer.encode(result);
 
     this.channel.sendToQueue(replyTo, content, {
       correlationId,
@@ -587,10 +593,9 @@ export class RpcServer {
 
     try {
       const extendedError = error as ExtendedError;
-      const response: ResponseEnvelope = {
-        id: correlationId || 'unknown',
-        timestamp: Date.now(),
-        success: false,
+
+      // Error: send slim error object { error: { code, message, details? } }
+      const errorResponse = {
         error: {
           code: extendedError.name || 'HANDLER_ERROR',
           message: extendedError.message,
@@ -598,7 +603,7 @@ export class RpcServer {
         },
       };
 
-      const content = this.config.serializer.encode(response);
+      const content = this.config.serializer.encode(errorResponse);
 
       this.channel.sendToQueue(replyTo, content, {
         correlationId,

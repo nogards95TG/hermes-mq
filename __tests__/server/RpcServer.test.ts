@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { RpcServer } from '../../src/server/rpc/RpcServer';
-import { ConnectionManager, ValidationError } from '../../src/core';
+import { ConnectionManager } from '../../src/core';
 
 // Mock ConnectionManager
 vi.mock('../../src/core', async () => {
@@ -75,12 +75,12 @@ describe('RpcServer', () => {
 
     it('should throw ValidationError for empty command', () => {
       const handler = vi.fn();
-      expect(() => server.registerHandler('', handler)).toThrow(ValidationError);
+      expect(() => server.registerHandler('', handler)).toThrow('Command is required');
     });
 
     it('should throw ValidationError for non-function handler', () => {
       expect(() => server.registerHandler('TEST', 'not a function' as any)).toThrow(
-        ValidationError
+        'Handler must be a function'
       );
     });
 
@@ -160,18 +160,13 @@ describe('RpcServer', () => {
       const handler = vi.fn().mockResolvedValue({ result: 'success' });
       server.registerHandler('TEST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'TEST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -182,27 +177,21 @@ describe('RpcServer', () => {
       expect(channel.ack).toHaveBeenCalledWith(message);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
-      expect(reply.success).toBe(true);
-      expect(reply.data).toEqual({ result: 'success' });
+      expect(reply).toEqual({ result: 'success' });
     });
 
     it('should handle request with metadata', async () => {
       const handler = vi.fn().mockResolvedValue({ result: 'success' });
       server.registerHandler('TEST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'TEST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-        metadata: { userId: '123' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+          headers: { userId: '123' },
         },
       };
 
@@ -217,18 +206,13 @@ describe('RpcServer', () => {
       const handler = vi.fn().mockRejectedValue(new Error('Handler error'));
       server.registerHandler('TEST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'TEST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -239,23 +223,18 @@ describe('RpcServer', () => {
       expect(channel.nack).toHaveBeenCalledWith(message, false, true);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
-      expect(reply.success).toBe(false);
+      expect(reply.error).toBeDefined();
       expect(reply.error.message).toBe('Handler error');
     });
 
     it('should send error response for unknown command', async () => {
-      const request = {
-        id: 'test-id',
-        command: 'UNKNOWN_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'UNKNOWN_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -266,7 +245,7 @@ describe('RpcServer', () => {
       expect(channel.nack).toHaveBeenCalledWith(message, false, true);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
-      expect(reply.success).toBe(false);
+      expect(reply.error).toBeDefined();
       expect(reply.error.message).toContain('No handler registered');
     });
 
@@ -274,17 +253,13 @@ describe('RpcServer', () => {
       const handler = vi.fn().mockResolvedValue({ result: 'success' });
       server.registerHandler('TEST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'TEST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
+      // New format: raw payload, command in 'type'
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -329,18 +304,13 @@ describe('RpcServer', () => {
         );
       server.registerHandler('TEST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'TEST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -456,18 +426,13 @@ describe('RpcServer', () => {
         );
       server.registerHandler('SLOW_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'SLOW_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'SLOW_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -506,18 +471,13 @@ describe('RpcServer', () => {
         );
       server.registerHandler('VERY_SLOW_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'VERY_SLOW_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'VERY_SLOW_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -551,18 +511,13 @@ describe('RpcServer', () => {
       const handler = vi.fn().mockResolvedValue({ result: 'success' });
       server.registerHandler('FAST_COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'FAST_COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'FAST_COMMAND',
+          timestamp: Date.now(),
         },
       };
 
@@ -586,18 +541,13 @@ describe('RpcServer', () => {
         );
       server.registerHandler('COMMAND', handler);
 
-      const request = {
-        id: 'test-id',
-        command: 'COMMAND',
-        timestamp: Date.now(),
-        data: { input: 'test' },
-      };
-
       const message = {
-        content: Buffer.from(JSON.stringify(request)),
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
           correlationId: 'test-correlation-id',
           replyTo: 'reply-queue',
+          type: 'COMMAND',
+          timestamp: Date.now(),
         },
       };
 

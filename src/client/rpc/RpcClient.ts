@@ -7,8 +7,6 @@ import {
   StateError,
   Logger,
   SilentLogger,
-  RequestEnvelope,
-  ResponseEnvelope,
   Serializer,
   JsonSerializer,
   MetricsCollector,
@@ -17,8 +15,9 @@ import {
   TIME,
   asConnectionWithConfirm,
   ExtendedError,
+  NETWORK_ERRORS,
 } from '../../core';
-import { NETWORK_ERRORS } from '../../core/constants';
+import { filterReservedHeaders } from '../utils';
 
 /**
  * RPC Client configuration
@@ -286,15 +285,7 @@ export class RpcClient {
     const correlationId = options?.correlationId || randomUUID();
     const timeout = options?.timeout || this.config.timeout;
     const messageId = randomUUID();
-
-    // Create request envelope
-    const request: RequestEnvelope<TRequest> = {
-      id: correlationId,
-      command: command.toUpperCase(),
-      timestamp: Date.now(),
-      data,
-      metadata: options?.metadata,
-    };
+    const timestamp = Date.now();
 
     return new Promise<TResponse>((resolve, reject) => {
       // Setup timeout
@@ -343,8 +334,8 @@ export class RpcClient {
       }
 
       try {
-        // Send request
-        const content = this.config.serializer.encode(request);
+        // Send request - raw payload only
+        const content = this.config.serializer.encode(data);
 
         this.channel!.sendToQueue(this.config.queueName, content, {
           correlationId,
@@ -352,7 +343,9 @@ export class RpcClient {
           persistent: this.config.persistent,
           contentType: 'application/json',
           messageId,
-          timestamp: request.timestamp,
+          timestamp,
+          type: command.toUpperCase(), // Command in 'type' field
+          headers: filterReservedHeaders(options?.metadata),
         });
 
         this.config.logger.debug('RPC request sent', {
@@ -393,9 +386,15 @@ export class RpcClient {
     this.pendingRequests.delete(correlationId);
 
     try {
-      const response: ResponseEnvelope = this.config.serializer.decode(msg.content);
+      const parsed = this.config.serializer.decode(msg.content);
 
-      if (response.success) {
+      // Auto-detect response format:
+      // - If has 'error' property → Error response
+      // - Otherwise → Success response (raw data)
+      const isError = parsed && typeof parsed === 'object' && 'error' in parsed;
+
+      if (!isError) {
+        // Success: raw data
         // Track successful RPC request
         if (this.config.metrics) {
           this.config.metrics.incrementCounter(
@@ -416,8 +415,9 @@ export class RpcClient {
           );
         }
 
-        pending.resolve(response.data);
+        pending.resolve(parsed);
       } else {
+        // Error response: { error: { code, message, details?, stack? } }
         // Track failed RPC request
         if (this.config.metrics) {
           this.config.metrics.incrementCounter(
@@ -438,9 +438,10 @@ export class RpcClient {
           );
         }
 
-        const error: ExtendedError = new Error(response.error?.message || 'Unknown error');
-        error.name = response.error?.code || 'RPC_ERROR';
-        error.details = response.error?.details;
+        const errorData = parsed.error;
+        const error: ExtendedError = new Error(errorData?.message || 'Unknown error');
+        error.name = errorData?.code || 'RPC_ERROR';
+        error.details = errorData?.details;
         pending.reject(error);
       }
     } catch (error) {

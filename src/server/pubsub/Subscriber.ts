@@ -506,11 +506,11 @@ export class Subscriber {
         return;
       }
 
-      const envelope = parseResult.data;
-      const eventName = envelope.eventName || msg.fields.routingKey;
-      const timestamp = envelope.timestamp || Date.now();
-      const metadata = envelope.metadata;
-      const data = envelope.data;
+      // Auto-detect envelope vs raw payload for backward compatibility
+      const eventName = msg.fields.routingKey;
+      const timestamp = msg.properties.timestamp || Date.now();
+      const metadata = msg.properties.headers;
+      const data = parseResult.data;
 
       this.config.logger.debug(`Received event: ${eventName}`);
 
