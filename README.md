@@ -401,20 +401,30 @@ await server.stop({
 ### Production Configuration Example
 
 ```typescript
-const rpcServer = new RpcServer({
-  connection: {
-    url: process.env.AMQP_URL || 'amqp://localhost',
-    heartbeat: 30,
-    reconnect: true,
-    maxReconnectAttempts: 10,
+import { ConnectionManager, RpcServer } from 'hermes-mq';
+
+// Create connection with retry and circuit breaker
+const connection = new ConnectionManager({
+  url: process.env.AMQP_URL || 'amqp://localhost',
+  heartbeat: 30,
+  retry: {
+    enabled: true,
+    maxAttempts: 10,
+    initialDelay: 1000,
+    maxDelay: 30000,
   },
+  enableCircuitBreaker: true,
+});
+
+const rpcServer = new RpcServer({
+  connection,
   queueName: 'critical-service',
 
   // Reliability settings
   ackStrategy: {
     mode: 'auto',
     maxRetries: 3,
-    requeue: (error, attempts) => attempts < 3 && !error.fatal,
+    requeue: (error, attempts) => attempts < 3,
     retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000),
   },
 
@@ -430,7 +440,6 @@ const rpcServer = new RpcServer({
   },
 
   prefetch: 1, // Process one message at a time
-  handlerTimeout: 30000,
 });
 ```
 
@@ -541,16 +550,23 @@ await connectionManager.assertQueue('my-queue', {
 
 ### 14. Enhanced Connection Recovery (v1.0+)
 
-Exponential backoff with heartbeat monitoring:
+Exponential backoff with heartbeat monitoring and circuit breaker:
 
 ```typescript
-const config = {
+const connection = new ConnectionManager({
   url: 'amqp://localhost',
-  reconnect: true,
-  reconnectInterval: 5000,
-  maxReconnectAttempts: 10,
   heartbeat: 60, // Recommended: 30-60s (warning if 0)
-};
+  retry: {
+    enabled: true,
+    maxAttempts: 10,
+    initialDelay: 5000,
+    maxDelay: 60000,
+    backoffMultiplier: 2,
+  },
+  enableCircuitBreaker: true,
+  circuitBreakerFailureThreshold: 5,
+  circuitBreakerResetTimeout: 60000,
+});
 // Delay: min(base * 2^attempt, 60s) = 5s, 10s, 20s, 40s, 60s...
 ```
 
@@ -895,7 +911,7 @@ hermes-mq/
 
 ## 🧪 Testing
 
-Hermes MQ is thoroughly tested with 189 tests (164 unit + 25 integration).
+Hermes MQ is thoroughly tested with 450+ tests (390+ unit + 60+ integration).
 
 ### Running Tests
 

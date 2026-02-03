@@ -344,9 +344,21 @@ export class Publisher {
    * Close publisher and cleanup resources.
    *
    * @remarks
+   * This method only closes the Publisher's channel, NOT the ConnectionManager.
+   * The ConnectionManager should be closed separately by the application when
+   * all components using it are done. This allows sharing a single connection
+   * across multiple Publishers, Subscribers, RpcClients, and RpcServers.
+   *
    * Channel close errors are intentionally caught and logged at WARN level
-   * because they are not critical during cleanup operations. The publisher
-   * will continue to close the connection manager regardless of channel errors.
+   * because they are not critical during cleanup operations.
+   *
+   * @example
+   * ```typescript
+   * // Correct shutdown pattern:
+   * await publisher.close();   // Closes only the channel
+   * await subscriber.stop();   // Closes only the channel
+   * await connection.close();  // Application closes connection when done
+   * ```
    */
   async close(): Promise<void> {
     this.assertedExchanges.clear();
@@ -362,7 +374,7 @@ export class Publisher {
       }
       this.channel = undefined;
     }
-    await this.connectionManager.close();
+    this.config.logger.info('Publisher closed');
   }
 
   /**
