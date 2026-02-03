@@ -64,6 +64,7 @@ export interface SubscriberConfig {
   retry?: RetryConfig;
   serializer?: Serializer;
   logger?: Logger;
+  /** Handler timeout in ms. Note: timeout does not cancel execution, handler may continue in background */
   handlerTimeout?: number;
   ackStrategy?: AckStrategy;
   messageValidation?: MessageValidationOptions;
@@ -658,7 +659,11 @@ export class Subscriber {
   }
 
   /**
-   * Execute a single handler with timeout support
+   * Execute a single handler with timeout support.
+   *
+   * Note: The timeout does not cancel handler execution - it only stops waiting for it.
+   * The handler may continue running in the background. Ensure handlers are idempotent
+   * and handle partial execution gracefully if using timeouts.
    */
   private async executeHandler(handler: EventHandler, data: any, context: any): Promise<any> {
     const startTime = Date.now();

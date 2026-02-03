@@ -6,10 +6,6 @@
 export { ConnectionManager } from './connection/ConnectionManager';
 export type { ConnectionConfig, QueueAssertionOptions } from './connection/ConnectionManager';
 
-// Channel Pool
-export { ChannelPool } from './connection/ChannelPool';
-export type { ChannelPoolConfig } from './connection/ChannelPool';
-
 // Message Utilities
 export { MessageParser } from './message/MessageParser';
 export type { ParseResult } from './message/MessageParser';

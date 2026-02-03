@@ -16,7 +16,6 @@
  */
 export {
   ConnectionManager,
-  ChannelPool,
   RetryPolicy,
   JsonSerializer,
   SilentLogger,
@@ -32,7 +31,6 @@ export {
 
 export type {
   ConnectionConfig,
-  ChannelPoolConfig,
   RetryConfig,
   MessageEnvelope,
   RequestEnvelope,
