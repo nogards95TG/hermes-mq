@@ -239,6 +239,41 @@ describe('Publisher', () => {
     });
   });
 
+  describe('isReady()', () => {
+    it('should return false before first publish', () => {
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+      });
+
+      expect(publisher.isReady()).toBe(false);
+    });
+
+    it('should return true after publish', async () => {
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+      });
+
+      await publisher.publish('event', {});
+
+      expect(publisher.isReady()).toBe(true);
+    });
+
+    it('should return false after close', async () => {
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+      });
+
+      await publisher.publish('event', {});
+      expect(publisher.isReady()).toBe(true);
+
+      await publisher.close();
+      expect(publisher.isReady()).toBe(false);
+    });
+  });
+
   describe('close()', () => {
     it('should close channel and connection', async () => {
       publisher = new Publisher({
@@ -268,6 +303,74 @@ describe('Publisher', () => {
 
       // Should assert exchange again after close/recreate
       expect(mockChannel.assertExchange).toHaveBeenCalled();
+    });
+  });
+
+  describe('publisher confirms disabled', () => {
+    it('should not call waitForConfirms when confirms disabled', async () => {
+      // Need to also mock createChannel (non-confirm)
+      mockConnection.createChannel = vi.fn().mockResolvedValue({
+        assertExchange: vi.fn().mockResolvedValue({}),
+        publish: vi.fn().mockReturnValue(true),
+        close: vi.fn().mockResolvedValue({}),
+        on: vi.fn(),
+        once: vi.fn(),
+      });
+
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+        publisherConfirms: false,
+      });
+
+      await publisher.publish('event', {});
+
+      expect(mockChannel.waitForConfirms).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('close() error handling', () => {
+    it('should handle channel close error gracefully', async () => {
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+      });
+
+      await publisher.publish('event', {});
+      mockChannel.close.mockRejectedValueOnce(new Error('Close failed'));
+
+      await expect(publisher.close()).resolves.not.toThrow();
+      expect(publisher.isReady()).toBe(false);
+    });
+  });
+
+  describe('publish error tracking', () => {
+    it('should track failed publish with metrics', async () => {
+      const mockMetrics = {
+        incrementCounter: vi.fn(),
+        observeHistogram: vi.fn(),
+      };
+
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+        enableMetrics: true,
+        retry: { enabled: false },
+      });
+
+      (publisher as any).config.metrics = mockMetrics;
+
+      mockChannel.publish.mockImplementationOnce(() => {
+        throw new Error('Publish failed');
+      });
+
+      await expect(publisher.publish('event', {})).rejects.toThrow();
+
+      expect(mockMetrics.incrementCounter).toHaveBeenCalledWith(
+        'hermes_messages_published_total',
+        expect.objectContaining({ status: 'error' }),
+        1
+      );
     });
   });
 

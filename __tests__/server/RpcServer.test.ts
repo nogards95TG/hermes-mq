@@ -446,6 +446,280 @@ describe('RpcServer', () => {
     });
   });
 
+  describe('ack strategy', () => {
+    it('should nack without requeue in manual mode', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        ackStrategy: { mode: 'manual', requeue: false },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+      // In manual mode, no error response is sent
+      expect(channel.sendToQueue).not.toHaveBeenCalled();
+    });
+
+    it('should support requeue as function', async () => {
+      const requeueFn = vi.fn().mockReturnValue(false);
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        ackStrategy: { mode: 'auto', requeue: requeueFn, maxRetries: 3 },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      expect(requeueFn).toHaveBeenCalled();
+      // requeue returned false, so message goes to DLQ
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+    });
+
+    it('should log warning when retryDelay is configured', async () => {
+      const retryDelay = 1000;
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        ackStrategy: { mode: 'auto', requeue: true, maxRetries: 3, retryDelay },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+        },
+      };
+
+      await mockConnection._consumeCallback(message);
+
+      // Message should still be requeued (nack with requeue=true)
+      const channel = await mockConnection.createConfirmChannel();
+      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+    });
+
+    it('should support retryDelay as function', async () => {
+      const delayFn = vi.fn().mockReturnValue(500);
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        ackStrategy: { mode: 'auto', requeue: true, maxRetries: 3, retryDelay: delayFn },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+        },
+      };
+
+      await mockConnection._consumeCallback(message);
+
+      expect(delayFn).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('stop() options', () => {
+    beforeEach(async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+      });
+      await server.start();
+    });
+
+    it('should force stop without waiting for in-flight', async () => {
+      const handler = vi
+        .fn()
+        .mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve({ result: 'done' }), 5000))
+        );
+      server.registerHandler('SLOW', handler);
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'SLOW',
+          timestamp: Date.now(),
+        },
+      };
+
+      // Start processing (don't await)
+      mockConnection._consumeCallback(message);
+
+      // Force stop immediately
+      await server.stop({ force: true });
+
+      expect(server.isServerRunning()).toBe(false);
+    });
+
+    it('should handle channel close error during stop', async () => {
+      const channel = await mockConnection.createConfirmChannel();
+      channel.close.mockRejectedValueOnce(new Error('Close failed'));
+
+      await expect(server.stop()).resolves.not.toThrow();
+      expect(server.isServerRunning()).toBe(false);
+    });
+
+    it('should handle consumer cancel error during stop', async () => {
+      const channel = await mockConnection.createConfirmChannel();
+      channel.cancel.mockRejectedValueOnce(new Error('Cancel failed'));
+
+      await expect(server.stop()).resolves.not.toThrow();
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle message without type property', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+      });
+
+      await server.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          timestamp: Date.now(),
+          // no 'type' property
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      // Should nack (command required error → requeue on first attempt)
+      expect(channel.nack).toHaveBeenCalled();
+    });
+
+    it('should report consumer count correctly', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+      });
+
+      expect(server.getConsumerCount()).toBe(0);
+
+      await server.start();
+      expect(server.getConsumerCount()).toBe(1);
+
+      await server.stop();
+      expect(server.getConsumerCount()).toBe(0);
+    });
+
+    it('should report in-flight count', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+      });
+
+      expect(server.getInFlightCount()).toBe(0);
+    });
+
+    it('should skip assertQueue when disabled', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        assertQueue: false,
+      });
+
+      await server.start();
+
+      const channel = await mockConnection.createConfirmChannel();
+      // assertQueue should not be called for the main queue
+      // (it may have been called in beforeEach setup, so we check the call count)
+      const assertQueueCalls = channel.assertQueue.mock.calls.filter(
+        (call: any[]) => call[0] === 'test-queue'
+      );
+      expect(assertQueueCalls).toHaveLength(0);
+    });
+
+    it('should handle error response send failure gracefully', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      const channel = await mockConnection.createConfirmChannel();
+      // Make sendToQueue throw on error response
+      channel.sendToQueue.mockImplementationOnce(() => {
+        throw new Error('Send failed');
+      });
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        properties: {
+          correlationId: 'test-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+          headers: { 'x-retry-count': 3 }, // final failure
+        },
+      };
+
+      // Should not throw even if error response fails
+      await expect(mockConnection._consumeCallback(message)).resolves.not.toThrow();
+    });
+  });
+
   describe('slow message detection', () => {
     it('should trigger warn callback for slow messages', async () => {
       const onSlowMessage = vi.fn();

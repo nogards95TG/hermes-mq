@@ -468,6 +468,218 @@ describe('Subscriber', () => {
     });
   });
 
+  describe('stop() with in-flight messages', () => {
+    it('should wait for in-flight messages to complete', async () => {
+      let consumeCallback: any;
+      let handlerResolved = false;
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+      });
+
+      const handler = vi.fn().mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        handlerResolved = true;
+      });
+
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { routingKey: 'user.created', deliveryTag: 1 },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
+      };
+
+      // Start processing but don't await
+      consumeCallback(message);
+
+      // Stop should wait for in-flight
+      await subscriber.stop({ timeout: 5000 });
+
+      expect(handlerResolved).toBe(true);
+      expect(subscriber.isRunning()).toBe(false);
+    });
+
+    it('should force stop without waiting', async () => {
+      let consumeCallback: any;
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+      });
+
+      const handler = vi.fn().mockImplementation(
+        () => new Promise((resolve) => setTimeout(resolve, 5000))
+      );
+
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { routingKey: 'user.created', deliveryTag: 1 },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
+      };
+
+      // Start processing
+      consumeCallback(message);
+
+      // Force stop immediately
+      await subscriber.stop({ force: true });
+
+      expect(subscriber.isRunning()).toBe(false);
+    });
+  });
+
+  describe('isolated error handling', () => {
+    it('should ack message even when handler fails in isolated mode', async () => {
+      let consumeCallback: any;
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+        errorHandling: {
+          isolateErrors: true,
+          continueOnError: true,
+        },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('Handler failed'));
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
+      };
+
+      await consumeCallback(message);
+
+      // In isolated mode, message is always ACKed
+      expect(mockChannel.ack).toHaveBeenCalledWith(message);
+      expect(mockChannel.nack).not.toHaveBeenCalled();
+    });
+
+    it('should call errorHandler callback in isolated mode', async () => {
+      let consumeCallback: any;
+      const errorHandler = vi.fn();
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+        errorHandling: {
+          isolateErrors: true,
+          continueOnError: true,
+          errorHandler,
+        },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('Handler failed'));
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
+      };
+
+      await consumeCallback(message);
+
+      expect(errorHandler).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          eventName: 'user.created',
+        })
+      );
+    });
+  });
+
+  describe('handler timeout', () => {
+    it('should timeout slow handlers', async () => {
+      let consumeCallback: any;
+
+      mockChannel.consume.mockImplementation((_queue: any, callback: any) => {
+        consumeCallback = callback;
+        return Promise.resolve({ consumerTag: 'test' });
+      });
+
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+        handlerTimeout: 50,
+      });
+
+      const handler = vi.fn().mockImplementation(
+        () => new Promise((resolve) => setTimeout(resolve, 5000))
+      );
+
+      subscriber.on('user.created', handler);
+      await subscriber.start();
+
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { routingKey: 'user.created' },
+        properties: { messageId: 'msg-1', timestamp: Date.now() },
+      };
+
+      await consumeCallback(message);
+
+      // Handler timed out, message should be nacked
+      expect(mockChannel.nack).toHaveBeenCalledWith(message, false, false);
+    });
+  });
+
+  describe('consumer count and in-flight', () => {
+    it('should report consumer count correctly', async () => {
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+      });
+
+      expect(subscriber.getConsumerCount()).toBe(0);
+
+      subscriber.on('test', vi.fn());
+      await subscriber.start();
+      expect(subscriber.getConsumerCount()).toBe(1);
+
+      await subscriber.stop();
+      expect(subscriber.getConsumerCount()).toBe(0);
+    });
+
+    it('should report in-flight count', async () => {
+      subscriber = new Subscriber({
+        connection: mockConnectionManager,
+        exchange: 'events',
+      });
+
+      expect(subscriber.getInFlightCount()).toBe(0);
+    });
+  });
+
   describe('slow message detection', () => {
     it('should trigger warn callback for slow handlers', async () => {
       const onSlowMessage = vi.fn();

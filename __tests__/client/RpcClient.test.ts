@@ -211,6 +211,49 @@ describe('RpcClient', () => {
 
       await sendPromise;
     });
+
+    it('should use custom correlationId when provided', async () => {
+      const sendPromise = client.send('TEST', { data: 'test' }, { correlationId: 'custom-id-123' });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(mockConnection._lastMessage.options.correlationId).toBe('custom-id-123');
+
+      // Simulate response
+      mockConnection._consumeCallback({
+        content: Buffer.from(JSON.stringify({ result: 'ok' })),
+        properties: { correlationId: 'custom-id-123' },
+      });
+
+      const result = await sendPromise;
+      expect(result).toEqual({ result: 'ok' });
+    });
+
+    it('should reject with decode error for invalid JSON response', async () => {
+      const sendPromise = client.send('TEST', { data: 'test' });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const correlationId = mockConnection._lastMessage.options.correlationId;
+
+      // Send invalid JSON
+      mockConnection._consumeCallback({
+        content: Buffer.from('not valid json'),
+        properties: { correlationId },
+      });
+
+      await expect(sendPromise).rejects.toThrow('Failed to decode response');
+    });
+
+    it('should handle null message (consumer cancelled)', async () => {
+      // Initialize client
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      // Simulate null message - should not throw
+      mockConnection._consumeCallback(null);
+
+      expect(true).toBe(true);
+    });
   });
 
   describe('close()', () => {
@@ -488,6 +531,7 @@ describe('RpcClient', () => {
       expect(attemptCount).toBe(1); // Should not retry when disabled
     });
   });
+
 
   describe('cleanup of expired requests', () => {
     beforeEach(() => {
