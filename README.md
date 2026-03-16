@@ -10,7 +10,7 @@ Modern, type-safe RabbitMQ client library for Node.js with intuitive APIs for RP
 ## ✨ Features
 
 - 🎯 **Type-Safe**: Full TypeScript support with generics
-- 🔌 **Connection Pooling**: Automatic channel reuse and health checks
+- 🔌 **Connection Sharing**: Single connection shared across all components with automatic channel management
 - 🔄 **Auto Reconnection**: Exponential backoff retry logic with circuit breaker
 - 🎭 **Dual Patterns**: Both RPC (request/response) and Pub/Sub (events)
 - 📝 **Flexible Logging**: Pluggable logger interface (Winston, Pino, etc.)
@@ -384,18 +384,24 @@ const subscriber = new Subscriber({
 Properly clean up resources and wait for in-flight messages:
 
 ```typescript
-const server = new RpcServer({
-  connection,
-  queueName: 'myqueue',
-});
-
-await server.start();
-
-// Later...
+// RPC Server
 await server.stop({
   timeout: 30000, // Wait up to 30 seconds for in-flight messages
   force: false, // Throw if timeout exceeded
 });
+
+// Subscriber (same options)
+await subscriber.stop({
+  timeout: 30000,
+  force: false,
+});
+
+// Publisher and RPC Client
+await publisher.close();
+await client.close();
+
+// Connection last
+await connection.close();
 ```
 
 ### Production Configuration Example
@@ -532,7 +538,6 @@ Automatic channel backpressure handling:
 // Publisher automatically:
 // - Detects when channel.publish() returns false
 // - Waits for 'drain' event before continuing
-// - Buffers pending writes internally
 ```
 
 ### 13. Queue Limits & TTL (v1.0+)
@@ -670,12 +675,12 @@ console.log(result);
       url: 'amqp://localhost'
     },
     channel: {
-      status: 'open',
-      count: 2
+      status: 'open',    // based on active consumers
+      count: 2           // number of active consumers
     },
     consumers: {
-      count: 2,
-      active: 2
+      count: 2,          // total registered servers/subscribers
+      active: 2          // currently consuming
     }
   },
   uptime: 125000,
@@ -725,8 +730,8 @@ readinessProbe:
 
 **Health Status:**
 
-- `healthy`: Connection UP + at least 1 channel open
-- `degraded`: Connection UP but no channels (warning state)
+- `healthy`: Connection UP and consumers running normally
+- `degraded`: Connection UP but registered consumers are all down (warning state)
 - `unhealthy`: Connection DOWN
 
 ### 17. Prometheus Metrics

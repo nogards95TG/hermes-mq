@@ -202,7 +202,7 @@ describe('RpcServer', () => {
       expect(channel.ack).toHaveBeenCalledWith(message);
     });
 
-    it('should send error response on handler failure', async () => {
+    it('should requeue on handler failure without sending error response (first attempt)', async () => {
       const handler = vi.fn().mockRejectedValue(new Error('Handler error'));
       server.registerHandler('TEST_COMMAND', handler);
 
@@ -219,15 +219,38 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      // With new ACK strategy, errors on first attempt result in NACK with requeue=true
+      // First attempt: NACK with requeue, no error response sent to client
       expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+      expect(channel.sendToQueue).not.toHaveBeenCalled();
+    });
+
+    it('should send error response on final failure (retries exhausted)', async () => {
+      const handler = vi.fn().mockRejectedValue(new Error('Handler error'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      const message = {
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+          headers: { 'x-retry-count': 3 }, // maxRetries reached
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      // Final failure: error response sent and NACK without requeue (DLQ)
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
       expect(reply.error).toBeDefined();
       expect(reply.error.message).toBe('Handler error');
     });
 
-    it('should send error response for unknown command', async () => {
+    it('should requeue on unknown command without sending error response (first attempt)', async () => {
       const message = {
         content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
@@ -241,8 +264,28 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      // With new ACK strategy, errors on first attempt result in NACK with requeue=true
+      // First attempt: NACK with requeue, no error response sent
       expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+      expect(channel.sendToQueue).not.toHaveBeenCalled();
+    });
+
+    it('should send error response for unknown command on final failure', async () => {
+      const message = {
+        content: Buffer.from(JSON.stringify({ input: 'test' })),
+        properties: {
+          correlationId: 'test-correlation-id',
+          replyTo: 'reply-queue',
+          type: 'UNKNOWN_COMMAND',
+          timestamp: Date.now(),
+          headers: { 'x-retry-count': 3 },
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      // Final failure: error response sent and NACK without requeue
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
       expect(reply.error).toBeDefined();

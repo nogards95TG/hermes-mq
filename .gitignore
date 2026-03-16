@@ -51,3 +51,7 @@ temp/
 
 .env
 .npmrc
+
+.agents
+.claude
+skills-lock.json

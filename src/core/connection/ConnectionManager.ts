@@ -75,7 +75,6 @@ export class ConnectionManager extends EventEmitter {
   private logger: Logger;
   private isClosed = false;
   private connectedAt: Date | null = null;
-  private channelCount = 0;
   private circuitBreaker: CircuitBreaker | null = null;
   private retryPolicy?: RetryPolicy;
 
@@ -301,31 +300,6 @@ export class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * Get channel count
-   *
-   * @returns Number of active channels
-   */
-  getChannelCount(): number {
-    return this.channelCount;
-  }
-
-  /**
-   * Increment channel count (called when a channel is created)
-   * @internal
-   */
-  incrementChannelCount(): void {
-    this.channelCount++;
-  }
-
-  /**
-   * Decrement channel count (called when a channel is closed)
-   * @internal
-   */
-  decrementChannelCount(): void {
-    this.channelCount = Math.max(0, this.channelCount - 1);
-  }
-
-  /**
    * Close connection and cleanup
    *
    * After calling close(), the manager cannot be reused.
@@ -377,7 +351,6 @@ export class ConnectionManager extends EventEmitter {
   ): Promise<amqp.Replies.AssertQueue> {
     const connection = await this.getConnection();
     const channel = await asConnectionWithConfirm(connection).createChannel();
-
     try {
       const queueArgs: Record<string, any> = options?.arguments ?? {};
 
@@ -421,9 +394,11 @@ export class ConnectionManager extends EventEmitter {
         queueArgs['x-dead-letter-exchange'] = dlqExchange;
         queueArgs['x-dead-letter-routing-key'] = dlqRoutingKey;
 
-        // Setup DLQ processor if provided
+        // Setup DLQ processor if provided - uses a dedicated channel
+        // so the setup channel can be safely closed
         if (options.dlq.processHandler) {
-          await this.consumeDLQ(channel, dlqName, options.dlq.processHandler);
+          const dlqChannel = await asConnectionWithConfirm(connection).createChannel();
+          await this.consumeDLQ(dlqChannel, dlqName, options.dlq.processHandler);
         }
       }
 

@@ -143,18 +143,6 @@ export class HealthChecker {
       errors.push('RabbitMQ connection is down');
     }
 
-    // Check channels
-    const channelCount = this.connectionManager.getChannelCount();
-    const channelHealth: ChannelHealth = {
-      status: channelCount > 0 ? 'open' : 'closed',
-      count: channelCount,
-    };
-
-    if (connectionStatus.connected && channelCount === 0) {
-      status = 'degraded';
-      errors.push('No active channels (connection up but no channels open)');
-    }
-
     // Check consumers
     let totalConsumers = 0;
     let activeConsumers = 0;
@@ -173,6 +161,17 @@ export class HealthChecker {
       count: totalConsumers,
       active: activeConsumers,
     };
+
+    // Check channels based on active consumers
+    const channelHealth: ChannelHealth = {
+      status: activeConsumers > 0 ? 'open' : 'closed',
+      count: activeConsumers,
+    };
+
+    if (connectionStatus.connected && totalConsumers > 0 && activeConsumers === 0) {
+      status = 'degraded';
+      errors.push('No active consumers (connection up but all consumers are down)');
+    }
 
     // Calculate uptime
     const uptime = timestamp.getTime() - this.startTime.getTime();

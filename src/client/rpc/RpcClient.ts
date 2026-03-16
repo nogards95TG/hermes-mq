@@ -112,12 +112,18 @@ export class RpcClient {
    */
   constructor(config: RpcClientConfig) {
     this.config = {
-      ...DEFAULT_CONFIG,
-      ...config,
+      queueName: config.queueName,
+      timeout: config.timeout ?? DEFAULT_CONFIG.timeout,
+      publisherConfirms: config.publisherConfirms ?? DEFAULT_CONFIG.publisherConfirms,
+      persistent: config.persistent ?? DEFAULT_CONFIG.persistent,
+      assertQueue: config.assertQueue ?? DEFAULT_CONFIG.assertQueue,
+      queueOptions: config.queueOptions ?? DEFAULT_CONFIG.queueOptions,
+      retry: config.retry ?? { enabled: false },
+      enableMetrics: config.enableMetrics ?? DEFAULT_CONFIG.enableMetrics,
       logger: config.logger ?? new SilentLogger(),
       serializer: config.serializer ?? new JsonSerializer(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
-    } as any;
+    };
 
     this.connectionManager = config.connection;
 
@@ -498,6 +504,12 @@ export class RpcClient {
       if (age > maxAge) {
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(correlationId);
+        pending.reject(
+          new TimeoutError(`RPC request expired during cleanup after ${age}ms`, {
+            correlationId,
+            age,
+          })
+        );
         cleanedCount++;
       }
     }

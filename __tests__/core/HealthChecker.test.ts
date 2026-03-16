@@ -5,12 +5,10 @@ import { ConnectionManager } from '../../src/core/connection/ConnectionManager';
 // Mock ConnectionManager
 vi.mock('../../src/core/connection/ConnectionManager', () => {
   const mockGetConnectionStatus = vi.fn();
-  const mockGetChannelCount = vi.fn();
 
   return {
     ConnectionManager: vi.fn(() => ({
       getConnectionStatus: mockGetConnectionStatus,
-      getChannelCount: mockGetChannelCount,
     })),
   };
 });
@@ -30,30 +28,32 @@ describe('HealthChecker', () => {
   });
 
   describe('check()', () => {
-    it('should return healthy status when connection is up and channels are open', async () => {
+    it('should return healthy status when connection is up', async () => {
       mockConnectionManager.getConnectionStatus.mockReturnValue({
         connected: true,
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(2);
 
       const result = await healthChecker.check();
 
       expect(result.status).toBe('healthy');
       expect(result.checks.connection.status).toBe('up');
-      expect(result.checks.channel.status).toBe('open');
-      expect(result.checks.channel.count).toBe(2);
       expect(result.errors).toBeUndefined();
     });
 
-    it('should return degraded status when connection is up but no channels', async () => {
+    it('should return degraded status when connection is up but all consumers are down', async () => {
       mockConnectionManager.getConnectionStatus.mockReturnValue({
         connected: true,
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(0);
+
+      // Register a server with no active consumers
+      const mockServer = {
+        getConsumerCount: vi.fn().mockReturnValue(0),
+      } as any;
+      healthChecker.registerServer(mockServer);
 
       const result = await healthChecker.check();
 
@@ -61,7 +61,22 @@ describe('HealthChecker', () => {
       expect(result.checks.connection.status).toBe('up');
       expect(result.checks.channel.status).toBe('closed');
       expect(result.checks.channel.count).toBe(0);
-      expect(result.errors).toContain('No active channels (connection up but no channels open)');
+      expect(result.errors).toContain(
+        'No active consumers (connection up but all consumers are down)'
+      );
+    });
+
+    it('should return healthy when connection is up and no servers registered', async () => {
+      mockConnectionManager.getConnectionStatus.mockReturnValue({
+        connected: true,
+        connectedAt: new Date(),
+        url: 'amqp://localhost',
+      });
+
+      const result = await healthChecker.check();
+
+      // No servers registered = nothing to be degraded about
+      expect(result.status).toBe('healthy');
     });
 
     it('should return unhealthy status when connection is down', async () => {
@@ -70,7 +85,6 @@ describe('HealthChecker', () => {
         connectedAt: null,
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(0);
 
       const result = await healthChecker.check();
 
@@ -86,7 +100,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const beforeCheck = Date.now();
       const result = await healthChecker.check();
@@ -105,9 +118,7 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
-      // Mock RpcServer
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),
       } as any;
@@ -118,6 +129,8 @@ describe('HealthChecker', () => {
 
       expect(result.checks.consumers.count).toBe(1);
       expect(result.checks.consumers.active).toBe(1);
+      expect(result.checks.channel.status).toBe('open');
+      expect(result.checks.channel.count).toBe(1);
     });
 
     it('should track multiple servers', async () => {
@@ -126,7 +139,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer1 = {
         getConsumerCount: vi.fn().mockReturnValue(1),
@@ -158,7 +170,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),
@@ -178,7 +189,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),
@@ -200,7 +210,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),
@@ -220,7 +229,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),
@@ -241,7 +249,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const result = await healthChecker.isHealthy();
 
@@ -254,7 +261,12 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(0);
+
+      // Register a server with no active consumers to trigger degraded
+      const mockServer = {
+        getConsumerCount: vi.fn().mockReturnValue(0),
+      } as any;
+      healthChecker.registerServer(mockServer);
 
       const result = await healthChecker.isHealthy();
 
@@ -267,7 +279,6 @@ describe('HealthChecker', () => {
         connectedAt: null,
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(0);
 
       const result = await healthChecker.isHealthy();
 
@@ -296,7 +307,6 @@ describe('HealthChecker', () => {
         connectedAt: new Date(),
         url: 'amqp://localhost',
       });
-      mockConnectionManager.getChannelCount.mockReturnValue(1);
 
       const mockServer = {
         getConsumerCount: vi.fn().mockReturnValue(1),

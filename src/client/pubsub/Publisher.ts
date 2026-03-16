@@ -135,8 +135,6 @@ export class Publisher {
   private config: RequiredPublisherConfig;
   private assertedExchanges = new Set<string>();
   private exchangeTypes = new Map<string, 'topic' | 'fanout' | 'direct'>();
-  private writeBuffer: Array<() => Promise<void>> = [];
-  private isWriting = false;
   private retryPolicy?: RetryPolicy;
 
   /**
@@ -341,6 +339,15 @@ export class Publisher {
   }
 
   /**
+   * Check if the publisher is ready to publish messages
+   *
+   * @returns true if the publisher has an active channel
+   */
+  isReady(): boolean {
+    return !!this.channel;
+  }
+
+  /**
    * Close publisher and cleanup resources.
    *
    * @remarks
@@ -437,7 +444,6 @@ export class Publisher {
     // Handle drain event for backpressure
     channel.on('drain', () => {
       this.config.logger.debug('Channel drained, resuming writes');
-      this.processWriteBuffer();
     });
 
     // Assert pre-configured exchanges
@@ -448,30 +454,6 @@ export class Publisher {
     }
 
     return channel;
-  }
-
-  /**
-   * Process buffered write operations
-   */
-  private async processWriteBuffer(): Promise<void> {
-    if (this.isWriting || this.writeBuffer.length === 0) {
-      return;
-    }
-
-    this.isWriting = true;
-
-    while (this.writeBuffer.length > 0) {
-      const operation = this.writeBuffer.shift();
-      if (operation) {
-        try {
-          await operation();
-        } catch (error) {
-          this.config.logger.error('Error processing buffered write', error as Error);
-        }
-      }
-    }
-
-    this.isWriting = false;
   }
 
   /**

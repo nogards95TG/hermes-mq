@@ -59,6 +59,13 @@ export interface AckStrategy {
   mode: 'auto' | 'manual';
   requeue: boolean | ((error: Error, attempts: number) => boolean);
   maxRetries?: number;
+  /**
+   * Delay between retries in milliseconds (or a function returning the delay for each attempt).
+   *
+   * Note: RabbitMQ does not support delayed requeue natively. Messages are requeued immediately
+   * regardless of this value. For true delayed retry, use a delayed exchange plugin or
+   * TTL-based retry queues.
+   */
   retryDelay?: number | ((attempt: number) => number);
 }
 

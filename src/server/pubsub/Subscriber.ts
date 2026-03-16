@@ -187,13 +187,23 @@ export class Subscriber {
     }
 
     this.config = {
-      ...DEFAULT_CONFIG,
-      ...config,
       exchange: config.exchange,
+      exchangeType: config.exchangeType ?? DEFAULT_CONFIG.exchangeType,
+      exchangeOptions: config.exchangeOptions ?? DEFAULT_CONFIG.exchangeOptions,
+      queueName: config.queueName,
+      queueOptions: config.queueOptions ?? DEFAULT_CONFIG.queueOptions,
+      prefetch: config.prefetch ?? DEFAULT_CONFIG.prefetch,
+      retry: config.retry ?? DEFAULT_CONFIG.retry,
+      handlerTimeout: config.handlerTimeout ?? 0,
+      ackStrategy: config.ackStrategy ?? DEFAULT_CONFIG.ackStrategy,
+      messageValidation: config.messageValidation ?? DEFAULT_CONFIG.messageValidation,
+      errorHandling: config.errorHandling ?? DEFAULT_CONFIG.errorHandling,
+      slowMessageDetection: config.slowMessageDetection ?? DEFAULT_CONFIG.slowMessageDetection,
+      enableMetrics: config.enableMetrics ?? DEFAULT_CONFIG.enableMetrics,
       serializer: config.serializer ?? new JsonSerializer(),
       logger: config.logger ?? new SilentLogger(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
-    } as any;
+    };
 
     this.messageParser = new MessageParser(this.config.messageValidation);
     this.reconnectionManager = new ConsumerReconnectionManager({
@@ -321,23 +331,48 @@ export class Subscriber {
   /**
    * Stop consuming and cleanup
    *
-   * Stops consuming messages and closes the channel.
-   * After calling stop(), the subscriber cannot be restarted.
+   * Stops consuming new messages and waits for in-flight messages to complete
+   * before closing the channel. After calling stop(), the subscriber cannot be restarted.
+   *
+   * @param options - Stop options
+   * @param options.timeout - Maximum time to wait for in-flight messages (default: 30s)
+   * @param options.force - Force close without waiting for in-flight messages
    */
-  async stop(): Promise<void> {
+  async stop(options?: { timeout?: number; force?: boolean }): Promise<void> {
     if (!this.running) {
       return;
     }
 
+    const timeout = options?.timeout || 30_000;
+
     // Cancel any pending reconnection attempts
     this.reconnectionManager.cancel();
 
+    // Stop consuming new messages
     if (this.channel && this.consumerTag) {
       try {
         await this.channel.cancel(this.consumerTag);
         this.consumerTag = undefined;
       } catch (error) {
         this.config.logger.warn('Error canceling consumer');
+      }
+    }
+
+    // Wait for in-flight messages to complete
+    if (!options?.force) {
+      const startTime = Date.now();
+
+      while (this.inFlightMessages.size > 0 && Date.now() - startTime < timeout) {
+        this.config.logger.debug('Waiting for in-flight messages', {
+          count: this.inFlightMessages.size,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      if (this.inFlightMessages.size > 0) {
+        this.config.logger.warn('Stopping with in-flight messages', {
+          count: this.inFlightMessages.size,
+        });
       }
     }
 
@@ -408,16 +443,12 @@ export class Subscriber {
     channel.on('cancel', () => {
       this.config.logger.warn('Consumer was cancelled by server, attempting to re-register...');
       this.running = false;
-
-      // Attempt to re-register the consumer after a delay
-      setTimeout(() => {
-        this.reRegisterConsumer().catch((error) => {
-          this.config.logger.error(
-            'Failed to re-register consumer after cancellation',
-            error as Error
-          );
-        });
-      }, 5000);
+      this.scheduleConsumerReconnect().catch((error) => {
+        this.config.logger.error(
+          'Failed to re-register consumer after cancellation',
+          error as Error
+        );
+      });
     });
 
     return channel;

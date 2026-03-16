@@ -127,15 +127,23 @@ export class RpcServer {
   private messageParser: MessageParser;
   private deduplicator: MessageDeduplicator;
   private reconnectionManager: ConsumerReconnectionManager;
+  private retryDelayWarningEmitted = false;
 
   constructor(config: RpcServerConfig) {
     this.config = {
-      ...DEFAULT_CONFIG,
-      ...config,
+      queueName: config.queueName,
+      prefetch: config.prefetch ?? DEFAULT_CONFIG.prefetch,
+      assertQueue: config.assertQueue ?? DEFAULT_CONFIG.assertQueue,
+      queueOptions: config.queueOptions ?? DEFAULT_CONFIG.queueOptions,
+      ackStrategy: config.ackStrategy ?? DEFAULT_CONFIG.ackStrategy,
+      messageValidation: config.messageValidation ?? DEFAULT_CONFIG.messageValidation,
+      deduplication: config.deduplication ?? DEFAULT_CONFIG.deduplication,
+      slowMessageDetection: config.slowMessageDetection ?? DEFAULT_CONFIG.slowMessageDetection,
+      enableMetrics: config.enableMetrics ?? DEFAULT_CONFIG.enableMetrics,
       logger: config.logger ?? new SilentLogger(),
       serializer: config.serializer ?? new JsonSerializer(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
-    } as any;
+    };
 
     this.connectionManager = config.connection;
 
@@ -240,16 +248,12 @@ export class RpcServer {
       this.channel.on('cancel', () => {
         this.config.logger.warn('Consumer was cancelled by server, attempting to re-register...');
         this.isRunning = false;
-
-        // Attempt to re-register the consumer after a delay
-        setTimeout(() => {
-          this.reRegisterConsumer().catch((error) => {
-            this.config.logger.error(
-              'Failed to re-register consumer after cancellation',
-              error as Error
-            );
-          });
-        }, 5000);
+        this.scheduleConsumerReconnect().catch((error) => {
+          this.config.logger.error(
+            'Failed to re-register consumer after cancellation',
+            error as Error
+          );
+        });
       });
 
       // Assert the request queue
@@ -669,7 +673,11 @@ export class RpcServer {
   }
 
   /**
-   * Requeue message with retry logic
+   * Requeue message with retry logic.
+   *
+   * Note: RabbitMQ does not support delayed requeue natively.
+   * The message is requeued immediately regardless of the delay parameter.
+   * For true delayed retries, use a delayed exchange plugin or TTL-based retry queues.
    */
   private requeueMessageWithRetry(
     msg: amqp.ConsumeMessage,
@@ -678,14 +686,13 @@ export class RpcServer {
     correlationId?: string
   ): void {
     this.updateRetryHeaders(msg, attempts);
-    // Fake delay logic - RabbitMQ does not support delayed requeue natively
-    // needs proper implementation with delayed exchanges or plugins
-    if (delay > 0) {
-      this.config.logger.debug('Scheduling retry with delay', {
-        correlationId,
-        delay,
-        attempt: attempts + 1,
-      });
+
+    if (delay > 0 && !this.retryDelayWarningEmitted) {
+      this.retryDelayWarningEmitted = true;
+      this.config.logger.warn(
+        'retryDelay is configured but RabbitMQ does not support delayed requeue natively. ' +
+          'Messages are requeued immediately. For true delayed retry, use a delayed exchange plugin or TTL-based retry queues.'
+      );
     }
 
     this.safeNack(msg, true, correlationId);
@@ -728,16 +735,17 @@ export class RpcServer {
       return;
     }
 
-    // Send error response to client
-    if (replyTo) {
-      await this.sendErrorResponse(error, correlationId, replyTo);
-    }
-
     // Determine retry or DLQ
+    // If we can requeue (no reply sent yet), do so without sending error response
+    // If we can't requeue, send error response and reject to DLQ
     if (this.shouldRequeueMessage(error, attempts)) {
       const delay = this.calculateRetryDelay(attempts);
       this.requeueMessageWithRetry(msg, attempts, delay, correlationId);
     } else {
+      // Only send error response when we won't requeue (final failure)
+      if (replyTo) {
+        await this.sendErrorResponse(error, correlationId, replyTo);
+      }
       this.sendToDeadLetterQueue(msg, attempts, correlationId);
     }
   }
