@@ -467,6 +467,39 @@ describe('Publisher', () => {
       expect(errorHandler).toBeDefined();
     });
 
+    it('should call onDisconnect on channel error', async () => {
+      const onDisconnect = vi.fn();
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+        onDisconnect,
+      });
+
+      await publisher.publish('event', {});
+
+      const errorHandler = channelEventHandlers.get('error');
+      const channelError = new Error('Channel error');
+      errorHandler!(channelError);
+
+      expect(onDisconnect).toHaveBeenCalledWith('error', channelError);
+    });
+
+    it('should call onDisconnect on channel close', async () => {
+      const onDisconnect = vi.fn();
+      publisher = new Publisher({
+        connection: mockConnectionManager,
+        exchange: 'test-exchange',
+        onDisconnect,
+      });
+
+      await publisher.publish('event', {});
+
+      const closeHandler = channelEventHandlers.get('close');
+      closeHandler!();
+
+      expect(onDisconnect).toHaveBeenCalledWith('close');
+    });
+
     it('should handle returned messages', async () => {
       const onReturn = vi.fn();
       publisher = new Publisher({

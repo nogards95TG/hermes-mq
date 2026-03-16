@@ -34,6 +34,14 @@ export interface RpcClientConfig {
   queueOptions?: amqp.Options.AssertQueue;
   retry?: RetryConfig;
   enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
+  /**
+   * Called when the client loses its channel (error or close).
+   *
+   * The client will automatically re-initialize on the next `send()` call,
+   * but this callback lets you react immediately (e.g. update health checks,
+   * log, or trigger an alert).
+   */
+  onDisconnect?: (reason: 'error' | 'close', error?: Error) => void;
 }
 
 /**
@@ -64,10 +72,11 @@ const DEFAULT_CONFIG = {
 /**
  * Required RPC client configuration with defaults applied
  */
-type RequiredRpcClientConfig = Required<Omit<RpcClientConfig, 'connection'>> & {
+type RequiredRpcClientConfig = Required<Omit<RpcClientConfig, 'connection' | 'onDisconnect'>> & {
   logger: Logger;
   serializer: Serializer;
   metrics?: MetricsCollector;
+  onDisconnect?: (reason: 'error' | 'close', error?: Error) => void;
 };
 
 /**
@@ -123,6 +132,7 @@ export class RpcClient {
       logger: config.logger ?? new SilentLogger(),
       serializer: config.serializer ?? new JsonSerializer(),
       metrics: config.enableMetrics ? MetricsCollector.global() : undefined,
+      onDisconnect: config.onDisconnect,
     };
 
     this.connectionManager = config.connection;
@@ -162,11 +172,13 @@ export class RpcClient {
       this.channel.on('error', (error: Error) => {
         this.config.logger.error('Channel error', error);
         this.isReady = false;
+        this.config.onDisconnect?.('error', error);
       });
 
       this.channel.on('close', () => {
         this.config.logger.warn('Channel closed');
         this.isReady = false;
+        this.config.onDisconnect?.('close');
       });
 
       // Assert the request queue

@@ -280,7 +280,7 @@ Hermes MQ includes comprehensive reliability features designed for production en
 
 ### 1. ACK/NACK Strategy with Retries
 
-Configure automatic message retry behavior with exponential backoff:
+Configure automatic message retry behavior:
 
 ```typescript
 const server = new RpcServer({
@@ -290,10 +290,14 @@ const server = new RpcServer({
     mode: 'auto', // 'auto' | 'manual'
     maxRetries: 3,
     requeue: (error, attempts) => attempts < 3 && !error.fatal,
-    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000),
   },
 });
 ```
+
+> **Important:** Server-side retry uses RabbitMQ's `nack` with requeue, which has inherent limitations:
+> - **RPC messages** (with `replyTo`): errors are sent immediately to the client — server-side requeue is not used because the client is waiting for a response. Use client-side retry (`RpcClient.retry`) instead.
+> - **Fire-and-forget messages**: requeue is attempted once based on the `redelivered` flag (the only reliable indicator RabbitMQ preserves across requeue). After that, the message is sent to the DLQ.
+> - **`retryDelay`** is accepted in config but RabbitMQ does not support delayed requeue natively — messages are always requeued immediately. For true delayed retry, use a [delayed exchange plugin](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange) or TTL-based retry queues.
 
 ### 2. Dead Letter Queue (DLQ) Configuration
 
@@ -431,7 +435,6 @@ const rpcServer = new RpcServer({
     mode: 'auto',
     maxRetries: 3,
     requeue: (error, attempts) => attempts < 3,
-    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 30000),
   },
 
   messageValidation: {
@@ -530,7 +533,33 @@ const publisher = new Publisher({
 });
 ```
 
-### 12. Flow Control & Backpressure (v1.0+)
+### 12. Disconnection Callbacks (v1.1+)
+
+Get notified when a client loses its channel, so you can update health checks, log, or trigger alerts:
+
+```typescript
+const publisher = new Publisher({
+  connection,
+  exchange: 'events',
+  onDisconnect: (reason, error) => {
+    // reason: 'error' | 'close'
+    logger.warn(`Publisher disconnected: ${reason}`, error);
+    healthCheck.markUnhealthy();
+  },
+});
+
+const client = new RpcClient({
+  connection,
+  queueName: 'users',
+  onDisconnect: (reason, error) => {
+    logger.warn(`RpcClient disconnected: ${reason}`, error);
+  },
+});
+```
+
+The channel is automatically recreated on the next `publish()` or `send()` call — the callback is for immediate visibility, not recovery.
+
+### 13. Flow Control & Backpressure (v1.0+)
 
 Automatic channel backpressure handling:
 
@@ -540,7 +569,7 @@ Automatic channel backpressure handling:
 // - Waits for 'drain' event before continuing
 ```
 
-### 13. Queue Limits & TTL (v1.0+)
+### 14. Queue Limits & TTL (v1.0+)
 
 Configure message expiration and queue size:
 
@@ -553,7 +582,7 @@ await connectionManager.assertQueue('my-queue', {
 });
 ```
 
-### 14. Enhanced Connection Recovery (v1.0+)
+### 15. Enhanced Connection Recovery (v1.0+)
 
 Exponential backoff with heartbeat monitoring and circuit breaker:
 
@@ -575,7 +604,7 @@ const connection = new ConnectionManager({
 // Delay: min(base * 2^attempt, 60s) = 5s, 10s, 20s, 40s, 60s...
 ```
 
-### 15. Slow Message Detection
+### 16. Slow Message Detection
 
 Monitor and detect slow message processing with multi-level thresholds:
 
@@ -646,7 +675,7 @@ const subscriber = new Subscriber({
 
 The slow message detection automatically measures handler execution time and triggers callbacks when thresholds are exceeded. Both `warn` and `error` thresholds are optional - use what fits your monitoring needs.
 
-### 16. Health Checks
+### 17. Health Checks
 
 Built-in health check API for Kubernetes liveness/readiness probes and monitoring:
 
@@ -734,7 +763,7 @@ readinessProbe:
 - `degraded`: Connection UP but registered consumers are all down (warning state)
 - `unhealthy`: Connection DOWN
 
-### 17. Prometheus Metrics
+### 18. Prometheus Metrics
 
 Zero-dependency metrics export in Prometheus text format with automatic global collection:
 
@@ -916,7 +945,7 @@ hermes-mq/
 
 ## 🧪 Testing
 
-Hermes MQ is thoroughly tested with 450+ tests (390+ unit + 60+ integration).
+Hermes MQ is thoroughly tested with 480+ tests (420+ unit + 60+ integration).
 
 ### Running Tests
 

@@ -354,6 +354,41 @@ describe('RpcClient', () => {
 
       expect(client.isClientReady()).toBe(false);
     });
+
+    it('should call onDisconnect on channel error', async () => {
+      const onDisconnect = vi.fn();
+
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        onDisconnect,
+      });
+
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const errorHandler = channelEventHandlers.get('error');
+      const channelError = new Error('Channel error');
+      errorHandler!(channelError);
+
+      expect(onDisconnect).toHaveBeenCalledWith('error', channelError);
+    });
+
+    it('should call onDisconnect on channel close', async () => {
+      const onDisconnect = vi.fn();
+
+      client = new RpcClient({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        onDisconnect,
+      });
+
+      await client.send('TEST', {}, { timeout: 100 }).catch(() => {});
+
+      const closeHandler = channelEventHandlers.get('close');
+      closeHandler!();
+
+      expect(onDisconnect).toHaveBeenCalledWith('close');
+    });
   });
 
   describe('initialization errors', () => {

@@ -718,7 +718,15 @@ export class RpcServer {
   }
 
   /**
-   * Handle request errors with configurable ACK strategy
+   * Handle request errors with configurable ACK strategy.
+   *
+   * For RPC messages (with replyTo): always send error response immediately and reject
+   * to DLQ. Server-side requeue doesn't work for RPC because RabbitMQ doesn't preserve
+   * in-memory header modifications (x-retry-count) across nack+requeue, causing infinite
+   * loops. RPC retry should be handled client-side via RetryPolicy.
+   *
+   * For fire-and-forget messages (no replyTo): requeue with retry count is attempted,
+   * but note that retry tracking relies on the redelivered flag, not exact counts.
    */
   private async handleRequestError(
     msg: amqp.ConsumeMessage,
@@ -727,7 +735,6 @@ export class RpcServer {
     replyTo: string | undefined
   ): Promise<void> {
     const strategy = this.config.ackStrategy;
-    const attempts = (msg.properties.headers?.['x-retry-count'] as number) || 0;
 
     // Handle manual mode
     if (strategy.mode === 'manual') {
@@ -735,17 +742,22 @@ export class RpcServer {
       return;
     }
 
-    // Determine retry or DLQ
-    // If we can requeue (no reply sent yet), do so without sending error response
-    // If we can't requeue, send error response and reject to DLQ
+    // For RPC (replyTo present): always respond with error and reject to DLQ.
+    // Server-side requeue doesn't work for RPC — RabbitMQ doesn't preserve
+    // modified headers across nack+requeue, so retry counting breaks.
+    if (replyTo) {
+      await this.sendErrorResponse(error, correlationId, replyTo);
+      this.safeNack(msg, false, correlationId);
+      return;
+    }
+
+    // For fire-and-forget (no replyTo): attempt requeue based on redelivered flag
+    const attempts = msg.fields.redelivered ? 1 : 0;
+
     if (this.shouldRequeueMessage(error, attempts)) {
       const delay = this.calculateRetryDelay(attempts);
       this.requeueMessageWithRetry(msg, attempts, delay, correlationId);
     } else {
-      // Only send error response when we won't requeue (final failure)
-      if (replyTo) {
-        await this.sendErrorResponse(error, correlationId, replyTo);
-      }
       this.sendToDeadLetterQueue(msg, attempts, correlationId);
     }
   }

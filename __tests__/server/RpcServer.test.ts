@@ -202,7 +202,7 @@ describe('RpcServer', () => {
       expect(channel.ack).toHaveBeenCalledWith(message);
     });
 
-    it('should requeue on handler failure without sending error response (first attempt)', async () => {
+    it('should send error response immediately for RPC handler failure', async () => {
       const handler = vi.fn().mockRejectedValue(new Error('Handler error'));
       server.registerHandler('TEST_COMMAND', handler);
 
@@ -219,30 +219,7 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      // First attempt: NACK with requeue, no error response sent to client
-      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
-      expect(channel.sendToQueue).not.toHaveBeenCalled();
-    });
-
-    it('should send error response on final failure (retries exhausted)', async () => {
-      const handler = vi.fn().mockRejectedValue(new Error('Handler error'));
-      server.registerHandler('TEST_COMMAND', handler);
-
-      const message = {
-        content: Buffer.from(JSON.stringify({ input: 'test' })),
-        properties: {
-          correlationId: 'test-correlation-id',
-          replyTo: 'reply-queue',
-          type: 'TEST_COMMAND',
-          timestamp: Date.now(),
-          headers: { 'x-retry-count': 3 }, // maxRetries reached
-        },
-      };
-
-      const channel = await mockConnection.createConfirmChannel();
-      await mockConnection._consumeCallback(message);
-
-      // Final failure: error response sent and NACK without requeue (DLQ)
+      // RPC: error response sent immediately, NACK without requeue
       expect(channel.nack).toHaveBeenCalledWith(message, false, false);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
@@ -250,7 +227,7 @@ describe('RpcServer', () => {
       expect(reply.error.message).toBe('Handler error');
     });
 
-    it('should requeue on unknown command without sending error response (first attempt)', async () => {
+    it('should send error response immediately for unknown RPC command', async () => {
       const message = {
         content: Buffer.from(JSON.stringify({ input: 'test' })),
         properties: {
@@ -264,27 +241,7 @@ describe('RpcServer', () => {
       const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      // First attempt: NACK with requeue, no error response sent
-      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
-      expect(channel.sendToQueue).not.toHaveBeenCalled();
-    });
-
-    it('should send error response for unknown command on final failure', async () => {
-      const message = {
-        content: Buffer.from(JSON.stringify({ input: 'test' })),
-        properties: {
-          correlationId: 'test-correlation-id',
-          replyTo: 'reply-queue',
-          type: 'UNKNOWN_COMMAND',
-          timestamp: Date.now(),
-          headers: { 'x-retry-count': 3 },
-        },
-      };
-
-      const channel = await mockConnection.createConfirmChannel();
-      await mockConnection._consumeCallback(message);
-
-      // Final failure: error response sent and NACK without requeue
+      // RPC: error response sent immediately, NACK without requeue
       expect(channel.nack).toHaveBeenCalledWith(message, false, false);
 
       const reply = JSON.parse(mockConnection._lastReply.content.toString());
@@ -477,7 +434,7 @@ describe('RpcServer', () => {
       expect(channel.sendToQueue).not.toHaveBeenCalled();
     });
 
-    it('should support requeue as function', async () => {
+    it('should support requeue as function (fire-and-forget)', async () => {
       const requeueFn = vi.fn().mockReturnValue(false);
       server = new RpcServer({
         connection: mockConnectionManager,
@@ -490,11 +447,12 @@ describe('RpcServer', () => {
 
       await server.start();
 
+      // Fire-and-forget message (no replyTo) — requeue logic applies
       const message = {
         content: Buffer.from(JSON.stringify({})),
+        fields: { redelivered: false },
         properties: {
           correlationId: 'test-id',
-          replyTo: 'reply-queue',
           type: 'TEST_COMMAND',
           timestamp: Date.now(),
         },
@@ -508,12 +466,11 @@ describe('RpcServer', () => {
       expect(channel.nack).toHaveBeenCalledWith(message, false, false);
     });
 
-    it('should log warning when retryDelay is configured', async () => {
-      const retryDelay = 1000;
+    it('should requeue fire-and-forget messages on first failure', async () => {
       server = new RpcServer({
         connection: mockConnectionManager,
         queueName: 'test-queue',
-        ackStrategy: { mode: 'auto', requeue: true, maxRetries: 3, retryDelay },
+        ackStrategy: { mode: 'auto', requeue: true, maxRetries: 3 },
       });
 
       const handler = vi.fn().mockRejectedValue(new Error('fail'));
@@ -521,6 +478,37 @@ describe('RpcServer', () => {
 
       await server.start();
 
+      // Fire-and-forget, first delivery
+      const message = {
+        content: Buffer.from(JSON.stringify({})),
+        fields: { redelivered: false },
+        properties: {
+          correlationId: 'test-id',
+          type: 'TEST_COMMAND',
+          timestamp: Date.now(),
+        },
+      };
+
+      const channel = await mockConnection.createConfirmChannel();
+      await mockConnection._consumeCallback(message);
+
+      // First attempt: NACK with requeue
+      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+    });
+
+    it('should send RPC error response immediately without requeue', async () => {
+      server = new RpcServer({
+        connection: mockConnectionManager,
+        queueName: 'test-queue',
+        ackStrategy: { mode: 'auto', requeue: true, maxRetries: 3 },
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('fail'));
+      server.registerHandler('TEST_COMMAND', handler);
+
+      await server.start();
+
+      // RPC message (has replyTo) — should never requeue
       const message = {
         content: Buffer.from(JSON.stringify({})),
         properties: {
@@ -531,14 +519,16 @@ describe('RpcServer', () => {
         },
       };
 
+      const channel = await mockConnection.createConfirmChannel();
       await mockConnection._consumeCallback(message);
 
-      // Message should still be requeued (nack with requeue=true)
-      const channel = await mockConnection.createConfirmChannel();
-      expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+      // RPC: error sent to client, NACK without requeue
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+      const reply = JSON.parse(mockConnection._lastReply.content.toString());
+      expect(reply.error.message).toBe('fail');
     });
 
-    it('should support retryDelay as function', async () => {
+    it('should support retryDelay as function (fire-and-forget)', async () => {
       const delayFn = vi.fn().mockReturnValue(500);
       server = new RpcServer({
         connection: mockConnectionManager,
@@ -551,11 +541,12 @@ describe('RpcServer', () => {
 
       await server.start();
 
+      // Fire-and-forget, first delivery
       const message = {
         content: Buffer.from(JSON.stringify({})),
+        fields: { redelivered: false },
         properties: {
           correlationId: 'test-id',
-          replyTo: 'reply-queue',
           type: 'TEST_COMMAND',
           timestamp: Date.now(),
         },
@@ -711,7 +702,6 @@ describe('RpcServer', () => {
           replyTo: 'reply-queue',
           type: 'TEST_COMMAND',
           timestamp: Date.now(),
-          headers: { 'x-retry-count': 3 }, // final failure
         },
       };
 

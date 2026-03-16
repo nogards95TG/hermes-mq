@@ -47,6 +47,14 @@ export interface PublisherConfig {
   serializer?: Serializer;
   logger?: Logger;
   enableMetrics?: boolean; // When enabled, metrics are collecterd using global MetricsCollector
+  /**
+   * Called when the publisher loses its channel (error or close).
+   *
+   * The publisher will automatically recreate the channel on the next `publish()` call,
+   * but this callback lets you react immediately (e.g. update health checks,
+   * log, or trigger an alert).
+   */
+  onDisconnect?: (reason: 'error' | 'close', error?: Error) => void;
 }
 
 /**
@@ -95,7 +103,13 @@ const DEFAULT_CONFIG = {
 type RequiredPublisherConfig = Required<
   Omit<
     PublisherConfig,
-    'exchanges' | 'exchange' | 'exchangeType' | 'onReturn' | 'confirmMode' | 'connection'
+    | 'exchanges'
+    | 'exchange'
+    | 'exchangeType'
+    | 'onReturn'
+    | 'confirmMode'
+    | 'onDisconnect'
+    | 'connection'
   >
 > & {
   exchanges?: PublisherConfig['exchanges'];
@@ -103,6 +117,7 @@ type RequiredPublisherConfig = Required<
   exchangeType?: 'topic' | 'fanout' | 'direct';
   onReturn?: (msg: ReturnedMessage) => void;
   confirmMode?: 'sync' | 'async';
+  onDisconnect?: (reason: 'error' | 'close', error?: Error) => void;
   metrics?: MetricsCollector;
 };
 
@@ -407,6 +422,7 @@ export class Publisher {
       this.config.logger.warn('Publisher channel closed');
       this.channel = undefined;
       this.assertedExchanges.clear();
+      this.config.onDisconnect?.('close');
     });
 
     channel.on('error', (error: Error) => {
@@ -418,6 +434,7 @@ export class Publisher {
       );
       this.channel = undefined;
       this.assertedExchanges.clear();
+      this.config.onDisconnect?.('error', error);
     });
 
     // Handle returned messages (mandatory flag)
